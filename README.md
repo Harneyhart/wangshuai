@@ -1,5 +1,3 @@
-# Word Document Comment System
-
 这是一个基于 Flask 的 Web 应用程序，用于自动为 Word 文档添加批注。该应用程序可以：
 - 接收 Word 文档（.doc 或 .docx）和 Excel 文件
 - 从 Excel 文件中读取批注信息
@@ -46,6 +44,7 @@ python app.py
 
 ## 注意事项
 
-- Excel 文件必须至少包含两列：原文和批注
-- 确保已安装 LibreOffice 以支持 .doc 文件的转换
-- 上传的文件会临时存储在 `uploads` 目录中 
+Excel 文件必须至少包含两列：原文和批注
+确保已安装 LibreOffice 以支持 .doc 文件的转换
+上传的文件会临时存储在 `uploads` 目录中 
+需要先保存一个word的副本文件，在副本里手动添加一个空的批注框，然后就可以使用系统进行自动批注
