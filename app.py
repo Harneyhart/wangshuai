@@ -16,6 +16,7 @@ from werkzeug.utils import secure_filename
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import uuid
+import importlib.util
 
 app = Flask(__name__)
 app.secret_key = 'replace-with-your-own-secret'
@@ -36,12 +37,48 @@ def find_libreoffice():
         raise Exception("未找到 LibreOffice，请确保已安装 LibreOffice")
     return soffice_path
 
+def convert_doc_to_docx_alternative(doc_path):
+    """备用的.doc转换方法，使用docx2txt"""
+    try:
+        import docx2txt
+        from docx import Document
+        
+        print("使用备用转换方法...")
+        
+        # 读取.doc文件内容
+        text = docx2txt.process(doc_path)
+        print(f"读取到文本长度: {len(text)} 字符")
+        
+        # 创建新的.docx文档
+        doc = Document()
+        
+        # 按行分割文本并添加到文档
+        lines = text.split('\n')
+        for line in lines:
+            if line.strip():  # 只添加非空行
+                doc.add_paragraph(line.strip())
+        
+        # 保存到临时文件
+        temp_dir = tempfile.mkdtemp()
+        converted_file = os.path.join(temp_dir, f"{os.path.splitext(os.path.basename(doc_path))[0]}.docx")
+        
+        doc.save(converted_file)
+        print(f"备用转换成功: {converted_file}")
+        
+        return converted_file
+        
+    except ImportError:
+        raise Exception("备用转换方法需要安装docx2txt库: pip install docx2txt")
+    except Exception as e:
+        raise Exception(f"备用转换失败: {str(e)}")
+
 def convert_doc_to_docx(doc_path):
     """将 .doc 文件转换为 .docx 格式"""
     temp_dir = None
     try:
         # 创建临时目录
         temp_dir = tempfile.mkdtemp()
+        print(f"创建临时目录: {temp_dir}")
         
         # 确保源文件存在
         if not os.path.exists(doc_path):
@@ -49,8 +86,12 @@ def convert_doc_to_docx(doc_path):
             
         # 获取 LibreOffice 路径
         soffice_path = find_libreoffice()
+        print(f"LibreOffice路径: {soffice_path}")
         
         # 使用 LibreOffice 进行转换
+        print("开始转换.doc文件...")
+        print(f"转换命令: {soffice_path} --headless --convert-to docx --outdir {temp_dir} {doc_path}")
+        
         result = subprocess.run([
             soffice_path,
             '--headless',
@@ -59,24 +100,93 @@ def convert_doc_to_docx(doc_path):
             doc_path
         ], capture_output=True, text=True, encoding='utf-8', errors='ignore')
         
+        print(f"转换命令返回码: {result.returncode}")
+        print(f"转换命令输出: {result.stdout}")
+        if result.stderr:
+            print(f"转换命令错误: {result.stderr}")
+        
         # 检查转换结果
         if result.returncode != 0:
             error_msg = result.stderr if result.stderr else "未知错误"
-            raise Exception(f"转换失败: {error_msg}")
+            print(f"LibreOffice转换失败，尝试备用方法: {error_msg}")
+            return convert_doc_to_docx_alternative(doc_path)
             
         # 获取转换后的文件路径
         base_name = os.path.splitext(os.path.basename(doc_path))[0]
         converted_file = os.path.join(temp_dir, f"{base_name}.docx")
         
+        print(f"期望的转换文件: {converted_file}")
+        
         # 验证转换后的文件
         if not os.path.exists(converted_file):
-            raise Exception(f"转换后的文件不存在: {converted_file}")
+            # 列出临时目录中的所有文件
+            print(f"临时目录内容:")
+            for file in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, file)
+                if os.path.isfile(file_path):
+                    print(f"  - {file} ({os.path.getsize(file_path)} bytes)")
+                else:
+                    print(f"  - {file} (目录)")
+            print("LibreOffice转换失败，尝试备用方法")
+            return convert_doc_to_docx_alternative(doc_path)
             
-        # 验证文件格式
-        with zipfile.ZipFile(converted_file, 'r') as docx:
-            if 'word/document.xml' not in docx.namelist():
-                raise Exception("转换后的文件格式不正确")
+        # 智能验证文件格式
+        print("验证转换后的文件格式...")
+        try:
+            with zipfile.ZipFile(converted_file, 'r') as docx:
+                file_list = docx.namelist()
+                print(f"转换后文件内容: {file_list}")
                 
+                # 检查不同的文档格式
+                if 'word/document.xml' in file_list:
+                    print("✓ 转换为Office Open XML格式成功")
+                elif 'content.xml' in file_list:
+                    print("转换为OpenDocument格式，尝试备用方法")
+                    return convert_doc_to_docx_alternative(doc_path)
+                elif any(f.startswith('word/') for f in file_list):
+                    print("✓ 转换为部分XML格式，可能可以处理")
+                else:
+                    # 检查是否有其他可能的文档结构
+                    print("转换后的文件格式未知，检查是否有其他结构")
+                    
+                    # 解压文件检查结构
+                    temp_check_dir = tempfile.mkdtemp()
+                    try:
+                        with zipfile.ZipFile(converted_file, 'r') as check_zip:
+                            check_zip.extractall(temp_check_dir)
+                        
+                        # 检查解压后的结构
+                        print(f"解压后的结构:")
+                        for root, dirs, files in os.walk(temp_check_dir):
+                            level = root.replace(temp_check_dir, '').count(os.sep)
+                            indent = ' ' * 2 * level
+                            print(f"{indent}{os.path.basename(root)}/")
+                            subindent = ' ' * 2 * (level + 1)
+                            for file in files:
+                                print(f"{subindent}{file}")
+                        
+                        # 查找可能的文档文件
+                        possible_docs = []
+                        for root, dirs, files in os.walk(temp_check_dir):
+                            for file in files:
+                                if file.endswith('.xml') and any(keyword in file.lower() for keyword in ['document', 'content', 'text']):
+                                    possible_docs.append(os.path.relpath(os.path.join(root, file), temp_check_dir))
+                        
+                        if possible_docs:
+                            print(f"找到可能的文档文件: {possible_docs}")
+                            print("✓ 文件结构可能可以处理")
+                        else:
+                            print("没有找到任何文档文件，尝试备用方法")
+                            return convert_doc_to_docx_alternative(doc_path)
+                            
+                    finally:
+                        shutil.rmtree(temp_check_dir)
+                        
+        except zipfile.BadZipFile:
+            print("转换后的文件不是有效的ZIP文件，尝试备用方法")
+            return convert_doc_to_docx_alternative(doc_path)
+                
+        print(f"✓ 转换成功: {converted_file}")
         return converted_file
         
     except Exception as e:
@@ -84,9 +194,13 @@ def convert_doc_to_docx(doc_path):
         if temp_dir and os.path.exists(temp_dir):
             try:
                 shutil.rmtree(temp_dir)
+                print(f"已清理临时目录: {temp_dir}")
             except:
                 pass
-        raise Exception(f"转换失败: {str(e)}")
+        
+        # 如果LibreOffice转换失败，尝试备用方法
+        print(f"LibreOffice转换失败: {str(e)}，尝试备用方法")
+        return convert_doc_to_docx_alternative(doc_path)
 
 @app.route('/')
 def index():
@@ -203,7 +317,23 @@ def upload_file():
         
         # 如果是 .doc 文件，先转换为 .docx
         if word_path.endswith('.doc'):
+            print(f"\n=== 转换.doc文件 ===")
+            print(f"原始文件: {word_path}")
             word_path = convert_doc_to_docx(word_path)
+            print(f"转换后文件: {word_path}")
+            
+            # 验证转换后的文件
+            if not os.path.exists(word_path):
+                raise Exception(f"转换后的文件不存在: {word_path}")
+            
+            # 验证文件格式
+            try:
+                with zipfile.ZipFile(word_path, 'r') as docx:
+                    if 'word/document.xml' not in docx.namelist():
+                        raise Exception("转换后的文件格式不正确，缺少document.xml")
+                    print("✓ 文件格式验证通过")
+            except Exception as e:
+                raise Exception(f"转换后的文件格式验证失败: {str(e)}")
             
         # 读取Excel中的批注
         comments = read_comments_from_excel(excel_path)
@@ -215,7 +345,8 @@ def upload_file():
             
         # 保存修改后的文档
         original_extension = os.path.splitext(word_file.filename)[1]  # 获取原始文件后缀
-        output_path = os.path.join(app.config['UPLOAD_FOLDER'], 'output_' + os.path.splitext(os.path.basename(word_path))[0] + original_extension)
+        output_base = 'output_' + os.path.splitext(os.path.basename(word_path))[0]
+        output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_base + '.docx')
         
         # 检查输出文件是否已存在，如果存在则删除
         if os.path.exists(output_path):
@@ -251,19 +382,18 @@ def upload_file():
             w_api_path = r"E:\809\word-api\api\w-api.py"
             if os.path.exists(w_api_path):
                 try:
-                    # 调用w-api.py，传入复制的Word文件路径
-                    result = subprocess.run([
-                        sys.executable,  # 使用当前Python解释器
-                        w_api_path,
-                        copied_word_path  # 传入复制的Word文件路径
-                    ], capture_output=True, text=True, encoding='utf-8', errors='ignore')
+                    # 直接调用w-api.py中的处理函数，而不是启动Flask服务
+                    spec = importlib.util.spec_from_file_location("w_api_module", w_api_path)
+                    w_api_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(w_api_module)
                     
-                    if result.returncode == 0:
-                        print("w-api.py 执行成功")
-                        print(f"输出: {result.stdout}")
+                    # 调用处理函数
+                    if hasattr(w_api_module, 'process_docx_file'):
+                        w_api_module.process_docx_file(copied_word_path)
+                        print("w-api.py 处理成功")
                     else:
-                        print(f"w-api.py 执行失败: {result.stderr}")
-                        # 即使w-api.py失败，也继续执行后续步骤
+                        print("警告: w-api.py 中没有找到 process_docx_file 函数")
+                        # 即使没有找到函数，也继续执行后续步骤
                 except Exception as e:
                     print(f"调用w-api.py时出错: {str(e)}")
                     # 即使出错，也继续执行后续步骤
@@ -275,12 +405,23 @@ def upload_file():
             add_comments_to_docx_xml(copied_word_path, comments, output_path)
             print(f"\n文档已保存到: {output_path}")
             
+            # 如果原始文件是.doc，处理后再转回真正的doc格式
+            final_output_path = output_path
+            if original_extension.lower() == '.doc':
+                final_output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_base + '.doc')
+                print(f"\n=== 第四步：将docx转换为doc ===")
+                convert_docx_to_doc(output_path, final_output_path)
+                print(f"已转换为doc: {final_output_path}")
+                # 删除中间docx文件
+                try:
+                    os.remove(output_path)
+                except Exception as e:
+                    print(f"警告: 删除中间docx文件失败: {str(e)}")
             # 清理临时文件
             try:
                 os.remove(copied_word_path)
             except Exception as e:
                 print(f"警告: 清理复制的Word文件失败: {str(e)}")
-                
             if word_path.endswith('.docx') and 'temp' in word_path:
                 try:
                     os.remove(word_path)
@@ -293,7 +434,7 @@ def upload_file():
             
             return jsonify({
                 'message': '文件处理成功',
-                'output_file': os.path.basename(output_path)
+                'output_file': os.path.basename(final_output_path)
             })
             
         except Exception as e:
@@ -321,32 +462,232 @@ def clean_comment_text(text):
                .replace("'", "&apos;"))
 
 def add_comments_to_docx_xml(docx_path, comments, output_path):
+    print(f"\n=== 开始处理docx文件 ===")
+    print(f"输入文件: {docx_path}")
+    print(f"输出文件: {output_path}")
+    
+    # 验证输入文件
+    if not os.path.exists(docx_path):
+        raise Exception(f"输入文件不存在: {docx_path}")
+    
+    # 智能验证文件格式
+    file_format = None
+    try:
+        with zipfile.ZipFile(docx_path, 'r') as docx:
+            file_list = docx.namelist()
+            print(f"文件内容: {file_list}")
+            
+            # 检查不同的文档格式
+            if 'word/document.xml' in file_list:
+                file_format = 'office_open_xml'
+                print("✓ 检测到Office Open XML格式")
+            elif 'content.xml' in file_list:
+                file_format = 'opendocument'
+                print("✓ 检测到OpenDocument格式")
+            elif any(f.startswith('word/') for f in file_list):
+                file_format = 'partial_xml'
+                print("✓ 检测到部分XML格式")
+            else:
+                file_format = 'unknown'
+                print("⚠ 未知文件格式")
+                
+    except zipfile.BadZipFile:
+        raise Exception("输入文件不是有效的ZIP文件")
+    except Exception as e:
+        raise Exception(f"文件格式验证失败: {str(e)}")
+    
+    # 如果是OpenDocument格式，需要转换
+    if file_format == 'opendocument':
+        print("检测到OpenDocument格式，需要转换为Office Open XML格式")
+        # 这里可以添加转换逻辑，或者直接使用备用方法
+        raise Exception("暂不支持OpenDocument格式，请使用Office Open XML格式的文档")
+    
+    # 如果是未知格式，尝试继续处理
+    if file_format == 'unknown':
+        print("警告: 未知文件格式，尝试继续处理")
+    
     # 1. 解压 docx
     temp_dir = 'temp_docx_' + str(uuid.uuid4())
     os.makedirs(temp_dir, exist_ok=True)
-    with zipfile.ZipFile(docx_path, 'r') as zip_ref:
-        zip_ref.extractall(temp_dir)
+    print(f"临时目录: {temp_dir}")
+    
+    try:
+        with zipfile.ZipFile(docx_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+        print("✓ 文件解压完成")
+    except Exception as e:
+        raise Exception(f"文件解压失败: {str(e)}")
 
     # 2. 解析 document.xml 和 comments.xml
     doc_xml_path = os.path.join(temp_dir, 'word', 'document.xml')
     comments_xml_path = os.path.join(temp_dir, 'word', 'comments.xml')
     
+    # 验证解压后的文件结构
+    print(f"解压后的目录结构:")
+    for root, dirs, files in os.walk(temp_dir):
+        level = root.replace(temp_dir, '').count(os.sep)
+        indent = ' ' * 2 * level
+        print(f"{indent}{os.path.basename(root)}/")
+        subindent = ' ' * 2 * (level + 1)
+        for file in files:
+            print(f"{subindent}{file}")
+    
+    # 检查是否有word目录
+    if not os.path.exists(os.path.join(temp_dir, 'word')):
+        print("警告: 解压后没有word目录，尝试查找其他可能的文档结构")
+        
+        # 查找可能的文档文件
+        possible_docs = []
+        for root, dirs, files in os.walk(temp_dir):
+            for file in files:
+                if file.endswith('.xml') and any(keyword in file.lower() for keyword in ['document', 'content', 'text']):
+                    possible_docs.append(os.path.join(root, file))
+        
+        if possible_docs:
+            print(f"找到可能的文档文件: {possible_docs}")
+            # 使用第一个找到的文档文件
+            doc_xml_path = possible_docs[0]
+            # 创建word目录结构
+            word_dir = os.path.join(temp_dir, 'word')
+            os.makedirs(word_dir, exist_ok=True)
+            # 移动文档文件到word目录
+            new_doc_path = os.path.join(word_dir, 'document.xml')
+            shutil.move(doc_xml_path, new_doc_path)
+            doc_xml_path = new_doc_path
+            print(f"已将文档文件移动到: {doc_xml_path}")
+        else:
+            # 如果没有找到任何XML文件，尝试创建基本的文档结构
+            print("没有找到任何文档文件，创建基本结构")
+            word_dir = os.path.join(temp_dir, 'word')
+            os.makedirs(word_dir, exist_ok=True)
+            
+            # 创建基本的document.xml
+            basic_doc_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:r>
+                <w:t>文档内容</w:t>
+            </w:r>
+        </w:p>
+    </w:body>
+</w:document>'''
+            
+            with open(doc_xml_path, 'w', encoding='utf-8') as f:
+                f.write(basic_doc_xml)
+            print(f"创建了基本的document.xml: {doc_xml_path}")
+    else:
+        # 有word目录，检查document.xml
+        if not os.path.exists(doc_xml_path):
+            # 尝试查找其他可能的文档文件
+            word_dir = os.path.join(temp_dir, 'word')
+            word_files = os.listdir(word_dir)
+            print(f"word目录下的文件: {word_files}")
+            
+            # 查找可能的文档文件
+            possible_docs = [f for f in word_files if f.endswith('.xml') and 'document' in f.lower()]
+            if possible_docs:
+                doc_xml_path = os.path.join(word_dir, possible_docs[0])
+                print(f"使用找到的文档文件: {possible_docs[0]}")
+            else:
+                raise Exception(f"解压后找不到document.xml或其他文档文件")
+    
+    print(f"document.xml路径: {doc_xml_path}")
+    print(f"comments.xml路径: {comments_xml_path}")
+    
     # 解析文档
-    doc_tree = etree.parse(doc_xml_path)
-    doc_root = doc_tree.getroot()
+    try:
+        # 使用更宽松的XML解析器
+        parser = etree.XMLParser(remove_blank_text=True, recover=True)
+        doc_tree = etree.parse(doc_xml_path, parser)
+        doc_root = doc_tree.getroot()
+        
+        # 检查命名空间映射
+        print(f"文档命名空间: {doc_root.nsmap}")
+        
+        # 如果缺少Word命名空间，重新创建文档
+        if 'w' not in doc_root.nsmap:
+            print("警告: 文档缺少Word命名空间，重新创建文档结构")
+            
+            # 创建新的文档根元素，包含正确的命名空间
+            new_root = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document',
+                                   nsmap={'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'})
+            
+            # 创建body元素
+            body = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body')
+            
+            # 尝试从原文档中提取内容
+            try:
+                # 查找所有段落
+                paragraphs = doc_root.findall('.//*[local-name()="p"]')
+                if not paragraphs:
+                    # 如果没有找到段落，创建一个默认段落
+                    p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
+                    r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+                    t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                    t.text = "文档内容"
+                    r.append(t)
+                    p.append(r)
+                    body.append(p)
+                else:
+                    # 转换现有段落到正确的命名空间
+                    for old_p in paragraphs:
+                        p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
+                        # 复制文本内容
+                        for old_r in old_p.findall('.//*[local-name()="r"]'):
+                            r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+                            for old_t in old_r.findall('.//*[local-name()="t"]'):
+                                if old_t.text:
+                                    t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                                    t.text = old_t.text
+                                    r.append(t)
+                            if len(r) > 0:
+                                p.append(r)
+                        if len(p) > 0:
+                            body.append(p)
+            except Exception as e:
+                print(f"转换文档内容时出错: {e}")
+                # 创建默认段落
+                p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
+                r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+                t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                t.text = "文档内容"
+                r.append(t)
+                p.append(r)
+                body.append(p)
+            
+            new_root.append(body)
+            
+            # 更新文档树
+            doc_root = new_root
+            doc_tree = etree.ElementTree(doc_root)
+            
+            print("✓ 重新创建了文档结构")
+        
+        print("✓ document.xml解析成功")
+    except Exception as e:
+        raise Exception(f"document.xml解析失败: {str(e)}")
     
     # 清理文档中的旧批注标记（覆盖w-api.py插入的空批注）
     print("清理现有的批注标记...")
-    for elem in doc_root.findall('.//w:commentRangeStart', namespaces=doc_root.nsmap):
+    
+    # 使用正确的命名空间进行查找
+    w_ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    
+    for elem in doc_root.findall('.//w:commentRangeStart', namespaces={'w': w_ns}):
         elem.getparent().remove(elem)
-    for elem in doc_root.findall('.//w:commentRangeEnd', namespaces=doc_root.nsmap):
+    for elem in doc_root.findall('.//w:commentRangeEnd', namespaces={'w': w_ns}):
         elem.getparent().remove(elem)
-    for elem in doc_root.findall('.//w:commentReference', namespaces=doc_root.nsmap):
+    for elem in doc_root.findall('.//w:commentReference', namespaces={'w': w_ns}):
         elem.getparent().remove(elem)
     
     # 创建新的comments.xml（覆盖现有的）
+    MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
     comments_root = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}comments', 
-                                nsmap={'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'})
+                                nsmap={'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+                                      'mc': MC_NS})
+    # 添加必需的兼容性属性
+    comments_root.set(f"{{{MC_NS}}}Ignorable", "w14 w15 wp14")
     comments_tree = etree.ElementTree(comments_root)
     print("创建新的comments.xml，覆盖现有批注")
     
@@ -365,42 +706,53 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
 
         # 在document.xml中查找目标文本并插入批注标记
         found = False
-        for para in doc_root.findall('.//w:p', namespaces=doc_root.nsmap):
-            para_text = ''.join([t.text for t in para.findall('.//w:t', namespaces=doc_root.nsmap) if t.text])
+        for para in doc_root.findall('.//w:p', namespaces={'w': w_ns}):
+            para_text = ''.join([t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
             if text in para_text:
                 print(f"在段落中找到文本: {para_text}")
                 # 找到包含目标文本的运行
-                for run in para.findall('.//w:r', namespaces=doc_root.nsmap):
-                    t = run.find('.//w:t', namespaces=doc_root.nsmap)
+                for run in para.findall('.//w:r', namespaces={'w': w_ns}):
+                    t = run.find('.//w:t', namespaces={'w': w_ns})
                     if t is not None and text in t.text:
                         print(f"在运行中找到文本: {t.text}")
-                        # 拆分文本，插入批注标记
+                        
+                        # 正确拆分文本
                         before, after = t.text.split(text, 1)
+                        
+                        # 修改当前run的文本为前半部分
                         t.text = before
-
-                        # 插入 commentRangeStart
-                        comment_start = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentRangeStart', nsmap=doc_root.nsmap)
+                        
+                        # 在run后面插入commentRangeStart
+                        comment_start = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentRangeStart')
                         comment_start.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id', comment_id)
                         run.addnext(comment_start)
-
-                        # 插入目标文本
-                        new_run = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r', nsmap=doc_root.nsmap)
-                        new_t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t', nsmap=doc_root.nsmap)
+                        
+                        # 插入目标文本的run
+                        new_run = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+                        new_t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
                         new_t.text = text
                         new_run.append(new_t)
                         comment_start.addnext(new_run)
-
-                        # 插入 commentRangeEnd
-                        comment_end = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentRangeEnd', nsmap=doc_root.nsmap)
+                        
+                        # 插入commentRangeEnd
+                        comment_end = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentRangeEnd')
                         comment_end.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id', comment_id)
                         new_run.addnext(comment_end)
-
-                        # 插入 commentReference
-                        comment_ref_run = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r', nsmap=doc_root.nsmap)
-                        comment_ref = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentReference', nsmap=doc_root.nsmap)
+                        
+                        # 插入commentReference
+                        comment_ref_run = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+                        comment_ref = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentReference')
                         comment_ref.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id', comment_id)
                         comment_ref_run.append(comment_ref)
                         comment_end.addnext(comment_ref_run)
+                        
+                        # 如果有后半部分文本，插入新的run
+                        if after:
+                            after_run = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+                            after_t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                            after_t.text = after
+                            after_run.append(after_t)
+                            comment_ref_run.addnext(after_run)
 
                         found = True
                         print("成功插入批注标记")
@@ -411,16 +763,15 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             print(f"警告: 未找到文本 '{text}'")
 
         # 在comments.xml中插入批注内容
-        comment_elem = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}comment', 
-                                   nsmap=comments_root.nsmap)
+        comment_elem = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}comment')
         comment_elem.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id', comment_id)
         comment_elem.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}author', '批注系统')
         comment_elem.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}date', '2024-03-14T12:00:00Z')
         
         # 创建批注内容
-        p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p', nsmap=comments_root.nsmap)
-        r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r', nsmap=comments_root.nsmap)
-        t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t', nsmap=comments_root.nsmap)
+        p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
+        r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+        t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
         t.text = clean_comment_text(comment_text)  # 清理特殊字符
         r.append(t)
         p.append(r)
@@ -433,26 +784,132 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     print(f"处理的批注数: {len(comments)}")
 
     # 5. 保存修改后的XML
-    doc_tree.write(doc_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
-    comments_tree.write(comments_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
+    try:
+        # 确保XML文件有正确的编码和声明
+        doc_tree.write(doc_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
+        comments_tree.write(comments_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
+        print("✓ XML文件保存成功")
+    except Exception as e:
+        raise Exception(f"保存XML文件失败: {str(e)}")
 
     # 6. 重新打包为docx
-    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as docx:
-        for foldername, subfolders, filenames in os.walk(temp_dir):
-            for filename in filenames:
-                file_path = os.path.join(foldername, filename)
-                arcname = os.path.relpath(file_path, temp_dir)
-                try:
-                    docx.write(file_path, arcname)
-                except Exception as e:
-                    print(f"警告: 写入文件 {arcname} 时出错: {str(e)}")
-                    continue
+    try:
+        # 确保输出目录存在
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+        
+        # 删除已存在的输出文件
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        
+        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as docx:
+            # 按特定顺序添加文件，确保docx结构正确
+            file_order = [
+                '[Content_Types].xml',
+                '_rels/.rels',
+                'word/_rels/document.xml.rels',
+                'word/document.xml',
+                'word/comments.xml'
+            ]
+            
+            # 首先添加必需的文件
+            for file_name in file_order:
+                file_path = os.path.join(temp_dir, file_name)
+                if os.path.exists(file_path):
+                    try:
+                        docx.write(file_path, file_name)
+                        print(f"✓ 添加文件: {file_name}")
+                    except Exception as e:
+                        print(f"警告: 添加文件 {file_name} 时出错: {str(e)}")
+                        continue
+            
+            # 然后添加其他文件
+            for foldername, subfolders, filenames in os.walk(temp_dir):
+                for filename in filenames:
+                    file_path = os.path.join(foldername, filename)
+                    arcname = os.path.relpath(file_path, temp_dir)
+                    
+                    # 跳过已经添加的文件
+                    if arcname in file_order:
+                        continue
+                    
+                    try:
+                        docx.write(file_path, arcname)
+                        print(f"✓ 添加文件: {arcname}")
+                    except Exception as e:
+                        print(f"警告: 写入文件 {arcname} 时出错: {str(e)}")
+                        continue
+        
+        # 验证输出文件
+        try:
+            with zipfile.ZipFile(output_path, 'r') as test_zip:
+                if 'word/document.xml' not in test_zip.namelist():
+                    raise Exception("输出文件缺少document.xml")
+                if 'word/comments.xml' not in test_zip.namelist():
+                    raise Exception("输出文件缺少comments.xml")
+            print("✓ docx文件打包成功并验证通过")
+        except Exception as e:
+            raise Exception(f"输出文件验证失败: {str(e)}")
+            
+    except Exception as e:
+        raise Exception(f"打包docx文件失败: {str(e)}")
 
     # 7. 清理临时文件夹
     try:
         shutil.rmtree(temp_dir)
+        print("✓ 临时文件夹清理完成")
     except Exception as e:
         print(f"警告: 清理临时文件夹时出错: {str(e)}")
+    
+    # 8. 调试：检查生成的XML结构
+    print("\n=== 调试信息 ===")
+    try:
+        with zipfile.ZipFile(output_path, 'r') as docx:
+            # 检查document.xml中的批注标记
+            doc_content = docx.read('word/document.xml').decode('utf-8')
+            comment_starts = doc_content.count('<w:commentRangeStart')
+            comment_ends = doc_content.count('<w:commentRangeEnd')
+            comment_refs = doc_content.count('<w:commentReference')
+            print(f"document.xml中: commentRangeStart={comment_starts}, commentRangeEnd={comment_ends}, commentReference={comment_refs}")
+            
+            # 检查comments.xml中的批注
+            if 'word/comments.xml' in docx.namelist():
+                comments_content = docx.read('word/comments.xml').decode('utf-8')
+                comment_elements = comments_content.count('<w:comment')
+                print(f"comments.xml中: comment元素={comment_elements}")
+            else:
+                print("警告: comments.xml不存在")
+                
+            # 检查rels关系
+            if 'word/_rels/document.xml.rels' in docx.namelist():
+                rels_content = docx.read('word/_rels/document.xml.rels').decode('utf-8')
+                comments_rel = rels_content.count('comments.xml')
+                print(f"rels中: comments关系={comments_rel}")
+            else:
+                print("警告: document.xml.rels不存在")
+                
+    except Exception as e:
+        print(f"调试检查时出错: {str(e)}")
+
+def convert_docx_to_doc(docx_path, doc_path):
+    """将.docx文件转换为.doc格式（使用LibreOffice）"""
+    soffice_path = find_libreoffice()
+    cmd = [
+        soffice_path,
+        '--headless',
+        '--convert-to', 'doc',
+        '--outdir', os.path.dirname(doc_path),
+        docx_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f'LibreOffice转换docx到doc失败: {result.stderr}')
+    # LibreOffice会自动命名输出文件，需重命名
+    base_name = os.path.splitext(os.path.basename(docx_path))[0]
+    generated_doc = os.path.join(os.path.dirname(doc_path), base_name + '.doc')
+    if generated_doc != doc_path:
+        os.rename(generated_doc, doc_path)
 
 if __name__ == '__main__':
     app.run(debug=True)
