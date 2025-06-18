@@ -156,7 +156,7 @@ def upload():
             p_new = etree.SubElement(doc_root, W("p"))
             r_new = etree.SubElement(p_new, W("r"))
             t_new = etree.SubElement(r_new, W("t"))
-            t_new.text = "[AI批注] 空批注"
+            t_new.text = "[批注系统] 空批注"
 
         doc_tree.write(document_path, xml_declaration=True, encoding='utf-8')
         comments_tree.write(comments_path, xml_declaration=True, encoding='utf-8')

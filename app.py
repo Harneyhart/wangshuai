@@ -42,13 +42,8 @@ def convert_doc_to_docx_alternative(doc_path):
     try:
         import docx2txt
         from docx import Document
-        
-        print("使用备用转换方法...")
-        
         # 读取.doc文件内容
         text = docx2txt.process(doc_path)
-        print(f"读取到文本长度: {len(text)} 字符")
-        
         # 创建新的.docx文档
         doc = Document()
         
@@ -63,8 +58,6 @@ def convert_doc_to_docx_alternative(doc_path):
         converted_file = os.path.join(temp_dir, f"{os.path.splitext(os.path.basename(doc_path))[0]}.docx")
         
         doc.save(converted_file)
-        print(f"备用转换成功: {converted_file}")
-        
         return converted_file
         
     except ImportError:
@@ -78,20 +71,12 @@ def convert_doc_to_docx(doc_path):
     try:
         # 创建临时目录
         temp_dir = tempfile.mkdtemp()
-        print(f"创建临时目录: {temp_dir}")
         
         # 确保源文件存在
         if not os.path.exists(doc_path):
             raise Exception(f"源文件不存在: {doc_path}")
-            
         # 获取 LibreOffice 路径
         soffice_path = find_libreoffice()
-        print(f"LibreOffice路径: {soffice_path}")
-        
-        # 使用 LibreOffice 进行转换
-        print("开始转换.doc文件...")
-        print(f"转换命令: {soffice_path} --headless --convert-to docx --outdir {temp_dir} {doc_path}")
-        
         result = subprocess.run([
             soffice_path,
             '--headless',
@@ -100,8 +85,6 @@ def convert_doc_to_docx(doc_path):
             doc_path
         ], capture_output=True, text=True, encoding='utf-8', errors='ignore')
         
-        print(f"转换命令返回码: {result.returncode}")
-        print(f"转换命令输出: {result.stdout}")
         if result.stderr:
             print(f"转换命令错误: {result.stderr}")
         
@@ -114,13 +97,10 @@ def convert_doc_to_docx(doc_path):
         # 获取转换后的文件路径
         base_name = os.path.splitext(os.path.basename(doc_path))[0]
         converted_file = os.path.join(temp_dir, f"{base_name}.docx")
-        
-        print(f"期望的转换文件: {converted_file}")
-        
+
         # 验证转换后的文件
         if not os.path.exists(converted_file):
             # 列出临时目录中的所有文件
-            print(f"临时目录内容:")
             for file in os.listdir(temp_dir):
                 file_path = os.path.join(temp_dir, file)
                 if os.path.isfile(file_path):
@@ -135,7 +115,6 @@ def convert_doc_to_docx(doc_path):
         try:
             with zipfile.ZipFile(converted_file, 'r') as docx:
                 file_list = docx.namelist()
-                print(f"转换后文件内容: {file_list}")
                 
                 # 检查不同的文档格式
                 if 'word/document.xml' in file_list:
@@ -317,21 +296,15 @@ def upload_file():
         
         # 如果是 .doc 文件，先转换为 .docx
         if word_path.endswith('.doc'):
-            print(f"\n=== 转换.doc文件 ===")
-            print(f"原始文件: {word_path}")
             word_path = convert_doc_to_docx(word_path)
-            print(f"转换后文件: {word_path}")
-            
             # 验证转换后的文件
             if not os.path.exists(word_path):
                 raise Exception(f"转换后的文件不存在: {word_path}")
-            
             # 验证文件格式
             try:
                 with zipfile.ZipFile(word_path, 'r') as docx:
                     if 'word/document.xml' not in docx.namelist():
                         raise Exception("转换后的文件格式不正确，缺少document.xml")
-                    print("✓ 文件格式验证通过")
             except Exception as e:
                 raise Exception(f"转换后的文件格式验证失败: {str(e)}")
             
@@ -419,16 +392,18 @@ def upload_file():
                     print(f"警告: 删除中间docx文件失败: {str(e)}")
             # 清理临时文件
             try:
-                os.remove(copied_word_path)
+                if os.path.exists(copied_word_path) and copied_word_path != output_path:
+                    os.remove(copied_word_path)
             except Exception as e:
                 print(f"警告: 清理复制的Word文件失败: {str(e)}")
-            if word_path.endswith('.docx') and 'temp' in word_path:
-                try:
-                    os.remove(word_path)
-                except Exception as e:
-                    print(f"警告: 清理临时文件失败: {str(e)}")
             try:
-                os.remove(excel_path)
+                if os.path.exists(word_path) and word_path != output_path:
+                    os.remove(word_path)
+            except Exception as e:
+                print(f"警告: 清理原始Word文件失败: {str(e)}")
+            try:
+                if os.path.exists(excel_path):
+                    os.remove(excel_path)
             except Exception as e:
                 print(f"警告: 清理Excel文件失败: {str(e)}")
             
@@ -694,94 +669,159 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     # 4. 遍历每个批注，插入到正文和comments.xml
     print("\n=== 开始插入批注 ===")
     print(f"总批注数量: {len(comments)}")
-    
-    for idx, item in enumerate(comments):
+
+    used_ids = []
+    current_id = 0
+    for item in comments:
         text = item['text'].strip()
         comment_text = item['comment'].strip()
-        comment_id = str(idx)  # 使用从0开始的连续ID
-        
-        print(f"\n处理第 {idx + 1}/{len(comments)} 个批注 (ID: {comment_id}):")
-        print(f"目标文本: {text}")
-        print(f"批注内容: {comment_text}")
-
-        # 在document.xml中查找目标文本并插入批注标记
+        comment_id = str(current_id)
         found = False
         for para in doc_root.findall('.//w:p', namespaces={'w': w_ns}):
             para_text = ''.join([t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
             if text in para_text:
-                print(f"在段落中找到文本: {para_text}")
-                # 找到包含目标文本的运行
                 for run in para.findall('.//w:r', namespaces={'w': w_ns}):
                     t = run.find('.//w:t', namespaces={'w': w_ns})
                     if t is not None and text in t.text:
-                        print(f"在运行中找到文本: {t.text}")
-                        
-                        # 正确拆分文本
                         before, after = t.text.split(text, 1)
-                        
-                        # 修改当前run的文本为前半部分
-                        t.text = before
-                        
-                        # 在run后面插入commentRangeStart
-                        comment_start = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentRangeStart')
-                        comment_start.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id', comment_id)
-                        run.addnext(comment_start)
-                        
-                        # 插入目标文本的run
-                        new_run = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
-                        new_t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                        parent = run.getparent()
+                        idx_run = parent.index(run)
+
+                        if parent.tag != W('p'):
+                            print(f"警告: run 的 parent 不是 <w:p>，而是 {parent.tag}，跳过该批注")
+                            continue
+
+                        # 前半部分
+                        if before:
+                            t.text = before
+                            insert_idx = idx_run + 1
+                        else:
+                            parent.remove(run)
+                            insert_idx = idx_run
+
+                        # commentRangeStart
+                        comment_start = etree.Element(W('commentRangeStart'))
+                        comment_start.set(W('id'), comment_id)
+                        parent.insert(insert_idx, comment_start)
+                        insert_idx += 1
+
+                        # 被批注文本
+                        new_run = etree.Element(W('r'))
+                        new_t = etree.Element(W('t'))
                         new_t.text = text
                         new_run.append(new_t)
-                        comment_start.addnext(new_run)
-                        
-                        # 插入commentRangeEnd
-                        comment_end = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentRangeEnd')
-                        comment_end.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id', comment_id)
-                        new_run.addnext(comment_end)
-                        
-                        # 插入commentReference
-                        comment_ref_run = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
-                        comment_ref = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}commentReference')
-                        comment_ref.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id', comment_id)
+                        parent.insert(insert_idx, new_run)
+                        insert_idx += 1
+
+                        # commentRangeEnd
+                        comment_end = etree.Element(W('commentRangeEnd'))
+                        comment_end.set(W('id'), comment_id)
+                        parent.insert(insert_idx, comment_end)
+                        insert_idx += 1
+
+                        # commentReference
+                        comment_ref_run = etree.Element(W('r'))
+                        comment_ref = etree.Element(W('commentReference'))
+                        comment_ref.set(W('id'), comment_id)
                         comment_ref_run.append(comment_ref)
-                        comment_end.addnext(comment_ref_run)
-                        
-                        # 如果有后半部分文本，插入新的run
+                        parent.insert(insert_idx, comment_ref_run)
+                        insert_idx += 1
+
+                        # 后半部分
                         if after:
-                            after_run = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
-                            after_t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                            after_run = etree.Element(W('r'))
+                            after_t = etree.Element(W('t'))
                             after_t.text = after
                             after_run.append(after_t)
-                            comment_ref_run.addnext(after_run)
+                            parent.insert(insert_idx, after_run)
 
                         found = True
-                        print("成功插入批注标记")
                         break
                 if found:
                     break
-        if not found:
-            print(f"警告: 未找到文本 '{text}'")
+        if found:
+            # 只有插入成功的批注才写入 comments.xml
+            comment_elem = etree.Element(W('comment'))
+            comment_elem.set(W('id'), comment_id)
+            comment_elem.set(W('author'), '批注系统')
+            comment_elem.set(W('date'), '2024-03-14T12:00:00Z')
+            p = etree.Element(W('p'))
+            r = etree.Element(W('r'))
+            t = etree.Element(W('t'))
+            t.text = clean_comment_text(comment_text)
+            r.append(t)
+            p.append(r)
+            comment_elem.append(p)
+            comments_root.append(comment_elem)
+            print(f"成功插入批注内容")
+            used_ids.append(current_id)
+            current_id += 1
+        else:
+            print(f"警告: 未找到文本 '{text}'，插入到文档最后一页新段落并标注未成功匹配")
+            # 新建一个段落
+            new_para = etree.Element(W('p'))
 
-        # 在comments.xml中插入批注内容
-        comment_elem = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}comment')
-        comment_elem.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id', comment_id)
-        comment_elem.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}author', '批注系统')
-        comment_elem.set('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}date', '2024-03-14T12:00:00Z')
-        
-        # 创建批注内容
-        p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
-        r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
-        t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
-        t.text = clean_comment_text(comment_text)  # 清理特殊字符
-        r.append(t)
-        p.append(r)
-        comment_elem.append(p)
-        comments_root.append(comment_elem)
-        
-        print(f"成功插入批注内容")
+            # 插入 commentRangeStart
+            comment_start = etree.Element(W('commentRangeStart'))
+            comment_start.set(W('id'), comment_id)
+            new_para.append(comment_start)
+
+            # 插入特殊文本
+            new_run = etree.Element(W('r'))
+            new_t = etree.Element(W('t'))
+            new_t.text = f"【未成功匹配】{text}"
+            new_run.append(new_t)
+            new_para.append(new_run)
+
+            # commentRangeEnd
+            comment_end = etree.Element(W('commentRangeEnd'))
+            comment_end.set(W('id'), comment_id)
+            new_para.append(comment_end)
+
+            # commentReference
+            comment_ref_run = etree.Element(W('r'))
+            comment_ref = etree.Element(W('commentReference'))
+            comment_ref.set(W('id'), comment_id)
+            comment_ref_run.append(comment_ref)
+            new_para.append(comment_ref_run)
+
+            # 把新段落加到文档最后
+            body = doc_root.find('.//w:body', namespaces={'w': w_ns})
+            body.append(new_para)
+
+            # 写入 comments.xml，内容前加提示
+            comment_elem = etree.Element(W('comment'))
+            comment_elem.set(W('id'), comment_id)
+            comment_elem.set(W('author'), '批注系统')
+            comment_elem.set(W('date'), '2024-03-14T12:00:00Z')
+            p = etree.Element(W('p'))
+            r = etree.Element(W('r'))
+            t = etree.Element(W('t'))
+            t.text = clean_comment_text(f"【未成功匹配】{comment_text}")
+            r.append(t)
+            p.append(r)
+            comment_elem.append(p)
+            comments_root.append(comment_elem)
+            used_ids.append(current_id)
+            current_id += 1
 
     print("\n=== 批注插入完成 ===")
     print(f"处理的批注数: {len(comments)}")
+
+    # 统计和输出
+    if used_ids:
+        print(f"已分配的批注id: {used_ids}")
+        print(f"最大id: {max(used_ids)}")
+        # 检查是否连续
+        expected_ids = list(range(min(used_ids), max(used_ids)+1))
+        if used_ids == expected_ids:
+            print("id是连续的")
+        else:
+            print("id不是连续的，缺失: ", set(expected_ids) - set(used_ids))
+    else:
+        print("没有插入任何批注，id列表为空")
+
+    print("批注id来自变量 current_id，每插入一个成功的批注 current_id += 1")
 
     # 5. 保存修改后的XML
     try:
@@ -819,9 +859,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                 if os.path.exists(file_path):
                     try:
                         docx.write(file_path, file_name)
-                        print(f"✓ 添加文件: {file_name}")
                     except Exception as e:
-                        print(f"警告: 添加文件 {file_name} 时出错: {str(e)}")
                         continue
             
             # 然后添加其他文件
@@ -834,12 +872,12 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                     if arcname in file_order:
                         continue
                     
-                    try:
-                        docx.write(file_path, arcname)
-                        print(f"✓ 添加文件: {arcname}")
-                    except Exception as e:
-                        print(f"警告: 写入文件 {arcname} 时出错: {str(e)}")
-                        continue
+                    # try:
+                    #     docx.write(file_path, arcname)
+                    #     print(f"✓ 添加文件: {arcname}")
+                    # except Exception as e:
+                    #     print(f"警告: 写入文件 {arcname} 时出错: {str(e)}")
+                    #     continue
         
         # 验证输出文件
         try:
@@ -891,6 +929,37 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                 
     except Exception as e:
         print(f"调试检查时出错: {str(e)}")
+
+    # 维护 word/_rels/document.xml.rels
+    rels_path = os.path.join(temp_dir, 'word', '_rels', 'document.xml.rels')
+    if os.path.exists(rels_path):
+        rels_tree = etree.parse(rels_path)
+        rels_root = rels_tree.getroot()
+        # 检查是否已有 comments 关系
+        has_comments_rel = any(
+            rel.get('Type') == 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments'
+            for rel in rels_root.findall('.//{http://schemas.openxmlformats.org/package/2006/relationships}Relationship')
+        )
+        if not has_comments_rel:
+            # 添加 comments 关系
+            rel = etree.Element('{http://schemas.openxmlformats.org/package/2006/relationships}Relationship')
+            rel.set('Id', 'rIdComments')
+            rel.set('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments')
+            rel.set('Target', 'comments.xml')
+            rels_root.append(rel)
+            rels_tree.write(rels_path, xml_declaration=True, encoding='utf-8', standalone='yes')
+    else:
+        # 如果没有rels文件，创建一个
+        rels_dir = os.path.dirname(rels_path)
+        os.makedirs(rels_dir, exist_ok=True)
+        rels_root = etree.Element('Relationships', nsmap={None: 'http://schemas.openxmlformats.org/package/2006/relationships'})
+        rel = etree.Element('Relationship')
+        rel.set('Id', 'rIdComments')
+        rel.set('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments')
+        rel.set('Target', 'comments.xml')
+        rels_root.append(rel)
+        rels_tree = etree.ElementTree(rels_root)
+        rels_tree.write(rels_path, xml_declaration=True, encoding='utf-8', standalone='yes')
 
 def convert_docx_to_doc(docx_path, doc_path):
     """将.docx文件转换为.doc格式（使用LibreOffice）"""
