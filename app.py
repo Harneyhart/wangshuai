@@ -30,6 +30,7 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+# 查找并返回本地LibreOffice的可执行文件路径，如果未安装则抛出异常。
 def find_libreoffice():
     """查找 LibreOffice 可执行文件路径"""
     soffice_path = r"C:\Program Files\LibreOffice\program\soffice.exe"
@@ -37,6 +38,7 @@ def find_libreoffice():
         raise Exception("未找到 LibreOffice，请确保已安装 LibreOffice")
     return soffice_path
 
+# 使用docx2txt库将.doc文件内容读取出来，并生成新的.docx文件作为备用转换方法。
 def convert_doc_to_docx_alternative(doc_path):
     """备用的.doc转换方法，使用docx2txt"""
     try:
@@ -65,6 +67,7 @@ def convert_doc_to_docx_alternative(doc_path):
     except Exception as e:
         raise Exception(f"备用转换失败: {str(e)}")
 
+# 使用LibreOffice将.doc文件转换为.docx格式，若失败则调用备用方法进行转换。
 def convert_doc_to_docx(doc_path):
     """将 .doc 文件转换为 .docx 格式"""
     temp_dir = None
@@ -181,18 +184,22 @@ def convert_doc_to_docx(doc_path):
         print(f"LibreOffice转换失败: {str(e)}，尝试备用方法")
         return convert_doc_to_docx_alternative(doc_path)
 
+# Flask路由，渲染首页模板。
 @app.route('/')
 def index():
     return render_template('index.html')
 
+# 创建一个指定名称的Word XML元素。
 def create_element(name):
     """创建 XML 元素"""
     return OxmlElement(name)
 
+# 为指定的XML元素设置属性。
 def create_attribute(element, name, value):
     """设置 XML 元素属性"""
     element.set(qn(name), value)
 
+# 在Word文档中查找指定文本，并在该文本处插入批注引用和批注内容。
 def insert_comment(doc, text, comment_text):
     """在Word文档中插入批注"""
     try:
@@ -254,6 +261,7 @@ def insert_comment(doc, text, comment_text):
     except Exception as e:
         raise Exception(f"插入批注时出错: {str(e)}")
 
+# 从Excel文件中读取批注数据，要求Excel文件至少包含两列：原文和批注。
 def read_comments_from_excel(excel_path):
     """从Excel文件中读取批注"""
     try:
@@ -272,6 +280,7 @@ def read_comments_from_excel(excel_path):
     except Exception as e:
         raise Exception(f"读取Excel文件时出错: {str(e)}")
 
+# Flask路由，处理文件上传请求，将Excel中的批注插入到Word文档中，并返回处理后的文档。
 @app.route('/upload_file', methods=['POST'])
 def upload_file():
     if 'word_file' not in request.files or 'excel_file' not in request.files:
@@ -428,6 +437,7 @@ def upload_file():
         print(str(e))
         return jsonify({'error': str(e)}), 500
 
+# 清理批注文本中的特殊字符，确保XML格式正确，避免解析错误。
 def clean_comment_text(text):
     """清理批注文本，确保特殊字符被正确转义"""
     return (text.replace("&", "&amp;")
@@ -436,6 +446,7 @@ def clean_comment_text(text):
                .replace('"', "&quot;")
                .replace("'", "&apos;"))
 
+# 将Excel中的批注数据插入到docx文件的XML结构中，包括在正文中插入批注标记和在comments.xml中添加批注内容。
 def add_comments_to_docx_xml(docx_path, comments, output_path):
     print(f"\n=== 开始处理docx文件 ===")
     print(f"输入文件: {docx_path}")
@@ -961,6 +972,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         rels_tree = etree.ElementTree(rels_root)
         rels_tree.write(rels_path, xml_declaration=True, encoding='utf-8', standalone='yes')
 
+# 使用LibreOffice将.docx文件转换为.doc格式，并重命名输出文件到指定路径。
 def convert_docx_to_doc(docx_path, doc_path):
     """将.docx文件转换为.doc格式（使用LibreOffice）"""
     soffice_path = find_libreoffice()
@@ -980,5 +992,6 @@ def convert_docx_to_doc(docx_path, doc_path):
     if generated_doc != doc_path:
         os.rename(generated_doc, doc_path)
 
+# 主程序入口，启动Flask应用，默认在本地开发环境运行。
 if __name__ == '__main__':
     app.run(debug=True)
