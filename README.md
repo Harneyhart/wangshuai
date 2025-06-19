@@ -33,6 +33,8 @@ python app.py
 - pandas
 - python-docx
 - LibreOffice（如需 .doc 转 .docx）
+- Libreoffice下载地址：https://www.libreoffice.org/download
+- app.py 中的第35行需要修改为自己的下载路径。
 
 安装依赖：
 ```bash
