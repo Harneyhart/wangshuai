@@ -779,7 +779,7 @@ def clean_comment_text(text):
 
 # 将Excel中的批注数据插入到docx文件的XML结构中，包括在正文中插入批注标记和在comments.xml中添加批注内容。
 def add_comments_to_docx_xml(docx_path, comments, output_path):
-    print(f"\n=== 开始处理docx文件（智能精确匹配） ===")
+    print(f"\n=== 第三步：开始处理docx文件（智能精确匹配） ===")
     print(f"输入文件: {docx_path}")
     print(f"输出文件: {output_path}")
     
@@ -825,13 +825,14 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             continue
 
         text_to_find, original_comment, _, comment_idx, reasoning = match
-        # 使用模型生成的原因为批注内容，如果为空则回退到原始批注
-        comment_content = reasoning.strip() if reasoning and reasoning.strip() else original_comment
+        
+        # 使用从Excel获取的原始批注作为内容
+        comment_content = original_comment
         comment_id = str(current_id)
         
         print(f"  ✓ 段落 {para_idx} 匹配到批注: '{original_comment}'")
         print(f"    应附着于文本: '{text_to_find}'")
-        print(f"    匹配的原因: '{comment_content}'")
+        print(f"    匹配成功的原因: '{reasoning}'")
 
         # 步骤 2: 在该段落内进行精确的跨run文本定位
         runs = para.findall('.//w:r', namespaces={'w': w_ns})
@@ -931,7 +932,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                 rel.set('Target', 'comments.xml')
                 rels_root.append(rel)
                 rels_tree.write(rels_path, xml_declaration=True, encoding='utf-8', standalone='yes')
-                print("✓ 在现有rels文件中添加了comments关系")
+                # print("✓ 在现有rels文件中添加了comments关系")
         except Exception as e:
             print(f"警告: 修改现有rels文件失败: {str(e)}")
             # 如果修改失败，重新创建文件
@@ -959,7 +960,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         
         rels_tree = etree.ElementTree(rels_root)
         rels_tree.write(rels_path, xml_declaration=True, encoding='utf-8', standalone='yes')
-        print("✓ 创建了新的document.xml.rels文件")
+        # print("✓ 创建了新的document.xml.rels文件")
     
     # 删除旧的输出文件
     if os.path.exists(output_path):
@@ -990,7 +991,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                         docx.write(file_path, file_name)
                         # print(f"✓ 添加文件: {file_name}")
                     except Exception as e:
-                        # print(f"警告: 写入文件 {file_name} 时出错: {str(e)}")
+                        print(f"警告: 写入文件 {file_name} 时出错: {str(e)}")
                         continue
             
             # 然后添加其他文件
@@ -1029,12 +1030,12 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     # 7. 清理临时文件夹
     try:
         shutil.rmtree(temp_dir)
-        print("✓ 临时文件夹清理完成")
+        # print("✓ 临时文件夹清理完成")
     except Exception as e:
         print(f"警告: 清理临时文件夹时出错: {str(e)}")
     
     # 8. 调试：检查生成的XML结构
-    print("\n=== 调试信息 ===")
+    # print("\n=== 调试信息 ===")
     try:
         with zipfile.ZipFile(output_path, 'r') as docx:
             # 检查document.xml中的批注标记
@@ -1042,13 +1043,13 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             comment_starts = doc_content.count('<w:commentRangeStart')
             comment_ends = doc_content.count('<w:commentRangeEnd')
             comment_refs = doc_content.count('<w:commentReference')
-            print(f"document.xml中: commentRangeStart={comment_starts}, commentRangeEnd={comment_ends}, commentReference={comment_refs}")
+            # print(f"document.xml中: commentRangeStart={comment_starts}, commentRangeEnd={comment_ends}, commentReference={comment_refs}")
             
             # 检查comments.xml中的批注
             if 'word/comments.xml' in docx.namelist():
                 comments_content = docx.read('word/comments.xml').decode('utf-8')
                 comment_elements = comments_content.count('<w:comment')
-                print(f"comments.xml中: comment元素={comment_elements}")
+                # print(f"comments.xml中: comment元素={comment_elements}")
             else:
                 print("警告: comments.xml不存在")
                 
@@ -1056,7 +1057,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             if 'word/_rels/document.xml.rels' in docx.namelist():
                 rels_content = docx.read('word/_rels/document.xml.rels').decode('utf-8')
                 comments_rel = rels_content.count('comments.xml')
-                print(f"rels中: comments关系={comments_rel}")
+                # print(f"rels中: comments关系={comments_rel}")
             else:
                 print("警告: document.xml.rels不存在")
                 
