@@ -888,13 +888,25 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         comment_elem.set(W('id'), comment_id)
         comment_elem.set(W('author'), '批注系统')
         comment_elem.set(W('date'), '2024-03-14T12:00:00Z')
-        p = etree.Element(W('p'))
-        r = etree.Element(W('r'))
-        t = etree.Element(W('t'))
-        t.text = clean_comment_text(comment_content)
-        r.append(t)
-        p.append(r)
-        comment_elem.append(p)
+
+        # 第一行：批注内容
+        p1 = etree.Element(W('p'))
+        r1 = etree.Element(W('r'))
+        t1 = etree.Element(W('t'))
+        t1.text = clean_comment_text(comment_content)
+        r1.append(t1)
+        p1.append(r1)
+        comment_elem.append(p1)
+
+        # 第二行：匹配原因
+        p2 = etree.Element(W('p'))
+        r2 = etree.Element(W('r'))
+        t2 = etree.Element(W('t'))
+        t2.text = clean_comment_text("匹配原因：" + reasoning)
+        r2.append(t2)
+        p2.append(r2)
+        comment_elem.append(p2)
+
         comments_root.append(comment_elem)
         
         print(f"    ✓ 成功插入批注。")
