@@ -1,45 +1,76 @@
-# Word文档批注系统
+# AI Word 文档批注系统
 
-这是一个基于Flask的Word文档批注系统，可以从Excel文件中读取批注数据，并将其插入到Word文档中。
+这是一个基于 Flask 的 Web 应用程序，它使用大语言模型（DeepSeek）为 Word 文档智能添加批注。
 
 ## 功能特性
 
-- 支持.doc和.docx格式的Word文档
-- 从Excel文件中读取批注数据
-- 自动将.doc文件转换为.docx格式
-- 自动保存转换后的docx文件到save-word目录
-- 智能文本匹配，支持跨段落和模糊匹配
-- 生成带有批注的Word文档
+-   **AI 驱动的匹配**：系统不再使用简单的文本搜索，而是通过 DeepSeek API 理解文档段落的语义，从而找到最相关的批注进行应用。
+-   **智能批注定位**：AI 不仅能为段落找到最合适的批注，还能识别出该批注在段落中具体对应的文本片段，确保了高精度的批注。
+-   **动态生成批注内容**：最终文档中批注栏显示的内容是 AI 生成的"匹配原因"，为用户提供了极具价值的上下文信息。
+-   **Web 交互界面**：提供一个简单的 Flask UI，方便用户上传 Word 文档和 Excel 文件。
+-   **广泛的文件支持**：能够处理 `.docx` 和 `.doc` 格式的文件（后者需要安装 LibreOffice 以进行自动格式转换）。
 
-## 安装要求
+## 系统要求
 
-### 系统要求
-- Python 3.7+
-- LibreOffice (用于.doc文件转换)
+1.  **Python 3.8+**
+2.  **LibreOffice**：用于将 `.doc` 文件转换为 `.docx`。
+    -   请从 [LibreOffice 官网](https://www.libreoffice.org/download/download/) 下载并安装。
+    -   本应用默认的程序路径为 `C:\Program Files\LibreOffice\program\soffice.exe`。如果您的安装路径不同，请在 `app.py` 文件中进行修改。
+3.  **DeepSeek API 密钥**：您必须拥有一个 [DeepSeek](https://platform.deepseek.com/) 平台的 API 密钥。
+4. 在app.py的第30行修改为您的 Deepseek 密钥。
 
-### Python依赖
-```bash
-pip install -r requirements.txt
-```
+## 安装与配置
 
-### LibreOffice安装
-- Windows: 从 [LibreOffice官网](https://www.libreoffice.org/download/download/) 下载并安装
-- 默认安装路径: `C:\Program Files\LibreOffice\program\soffice.exe`
+1.  **克隆代码仓库：**
+    ```bash
+    git clone <repository-url>
+    cd <repository-directory>
+    ```
+
+2.  **安装 Python 依赖：**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+3.  **配置 API 密钥：**
+    -   打开 `app.py` 文件。
+    -   找到 `DEEPSEEK_API_KEY = 'sk-...'` 这一行。
+    -   将占位符替换为您自己的 DeepSeek API 密钥。
 
 ## 使用方法
 
-1. 启动应用：
-```bash
-python app.py
-```
+1.  **运行应用程序：**
+    ```bash
+    python app.py
+    ```
 
-2. 打开浏览器访问：`http://localhost:5000`
+2.  **访问 Web 界面：**
+    -   打开您的浏览器并访问 `http://127.0.0.1:5000`。
 
-3. 上传文件：
-   - Word文档：支持.doc和.docx格式
-   - Excel文件：包含批注数据的.xlsx文件
+3.  **准备您的文件：**
+    -   **Word 文档**：一个您希望添加批注的 `.doc` 或 `.docx` 文件。
+    -   **Excel 文件 (`.xlsx`)**：一个包含候选批注列表的文件。
+        -   系统只会读取该 Excel 文件的**第二列**。
+        -   这一列应包含所有可供 AI 在分析文档时选择的批注。第一列的内容将会被忽略。
 
-4. 系统会自动处理文件并生成带有批注的Word文档
+4.  **上传并处理：**
+    -   使用网页上的表单上传您的 Word 文档和 Excel 文件。
+    -   系统将会逐段处理文档，通过 AI 选择并放置最相关的批注。
+    -   处理完成后，系统会提示您下载已添加批注的 `.docx` 文件。
+
+## 技术工作流
+
+1.  **文件上传**：用户上传一个 Word 文档和一个 Excel 文件。
+2.  **`.doc` 转换**（如果需要）：如果上传的是 `.doc` 文件，系统会调用 LibreOffice 将其转换为 `.docx`。
+3.  **段落遍历**：系统读取 `.docx` 文件并逐一遍历其中的文本段落。
+4.  **AI 匹配**：对于每个段落，系统向 DeepSeek 发送一个 API 请求。请求中包含了该段落的文本以及从 Excel 文件第二列读取的完整候选批注列表。
+5.  **AI 响应**：AI 返回一个 JSON 对象，其中包含：
+    -   最佳匹配的批注。
+    -   该批注应附着在段落中的具体文本。
+    -   它做出该选择的原因。
+6.  **XML 操作**：系统使用 `lxml` 库直接操作 `.docx` 文件中的 `document.xml`。它找到 AI 指定的精确文本，并用 `commentRangeStart` 和 `commentRangeEnd` 标签将其包裹起来。
+7.  **生成批注**：AI 返回的 `reasoning` (原因) 文本将被作为批注内容添加到 `comments.xml` 文件中。
+8.  **文件重打包**：修改后的 XML 文件被重新打包成一个新的 `.docx` 文件，并提供给用户下载。
 
 ## 文件保存
 

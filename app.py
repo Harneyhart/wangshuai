@@ -18,6 +18,8 @@ from docx.oxml.ns import qn
 import uuid
 import importlib.util
 import datetime
+import requests
+import numpy as np
 
 app = Flask(__name__)
 app.secret_key = 'replace-with-your-own-secret'
@@ -25,48 +27,108 @@ app.secret_key = 'replace-with-your-own-secret'
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 def W(tag): return f"{{{W_NS}}}{tag}"
 
-# 模糊文本匹配函数
-def find_best_text_match(target_text, document_text, threshold=0.7):
+DEEPSEEK_API_KEY = 'sk-44707dc99db4416c9d21260fb0d9f6bc'
+DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions'
+
+def deepseek_text_match(target_text, doc_texts, threshold=0.7):
     """
-    使用模糊匹配查找最相似的文本
-    :param target_text: 要查找的文本
-    :param document_text: 文档中的文本
-    :param threshold: 相似度阈值 (0.0-1.0)
-    :return: (匹配的文本, 相似度, 开始位置, 结束位置) 或 None
+    用DeepSeek大模型为段落寻找最匹配的批注，并返回该批注应附着的具体文本。
+    target_text: docx文档中的段落文本
+    doc_texts: List[str]，Excel中的批注内容列表
+    threshold: 相似度阈值
+    返回: (应附着的文本, 匹配的批注, 相似度, 批注索引, 匹配原因) 或 None
     """
-    if not target_text or not document_text:
+    print(f"\n=== DeepSeek文本匹配开始 ===")
+    print(f"批注内容: {doc_texts}")
+    print(f"段落文本: '{target_text[:70]}...'")
+    headers = {
+        'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
+        'Content-Type': 'application/json',
+    }
+    
+    candidate_comments = [f"{i+1}. {c}" for i, c in enumerate(doc_texts) if c.strip()]
+    if not candidate_comments:
+        print("  ⚠ 没有找到有效的候选批注")
         return None
     
-    # 方法1：直接匹配
-    if target_text in document_text:
-        start_pos = document_text.find(target_text)
-        return (target_text, 1.0, start_pos, start_pos + len(target_text))
+    system_prompt = """你是一个专业的文档批注匹配专家。你的任务是分析一个段落和一系列候选批注，找出最适合该段落的批注，并从段落中抽取出该批注应附着的原文。
+
+评估标准：
+1. 语义相关性：段落内容与批注在语义上是否高度相关。
+2. 精确性：批注是否针对段落中的特定短语或句子。
+
+请严格按照以下JSON格式返回结果，确保 `target_text_in_paragraph` 的内容是 `paragraph_text` 的子字符串：
+{
+    "best_match_index": 数字(候选批注的编号，从1开始),
+    "similarity_score": 数字(0.0-1.0之间的相似度分数),
+    "reasoning": "为什么这个批注最适合该段落？（如果文档原文为英文，原因请用中文回答）",
+    "target_text_in_paragraph": "从段落中抽出的、批注应附着的原文（必须是段落的子串）"
+}
+
+如果没有任何批注适合该段落，返回：
+{
+    "best_match_index": null,
+    "similarity_score": 0.0,
+    "reasoning": "未找到合适批注的原因",
+    "target_text_in_paragraph": null
+}"""
+
+    user_prompt = f""""paragraph_text":
+"{target_text}"
+
+"candidate_comments":
+{chr(10).join(candidate_comments)}
+
+请分析上述段落和批注，找出最匹配的组合，并按要求返回JSON。"""
+
+    data = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.1,
+        "max_tokens": 500,
+        "response_format": {"type": "json_object"}
+    }
     
-    # 方法2：模糊匹配
-    # 将文档文本分割成可能的候选片段
-    words = target_text.split()
-    if len(words) <= 1:
+    try:
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)
+        if response.status_code != 200:
+            print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
+            return None
+        
+        result = response.json()
+        content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+        
+        # print(f"✅ DeepSeek响应: {content}")
+        
+        import json
+        match_result = json.loads(content)
+        
+        best_index = match_result.get('best_match_index')
+        similarity_score = match_result.get('similarity_score', 0.0)
+        text_in_para = match_result.get('target_text_in_paragraph')
+        reasoning = match_result.get('reasoning', '')
+        
+        if best_index is not None and similarity_score >= threshold and text_in_para:
+            actual_index = best_index - 1
+            if 0 <= actual_index < len(doc_texts):
+                matched_comment = doc_texts[actual_index]
+                # 验证返回的文本是否在原文中
+                if text_in_para in target_text:
+                    return text_in_para, matched_comment, similarity_score, actual_index, reasoning
+                else:
+                    print(f"  ❌ 模型返回的文本 '{text_in_para}' 不在段落中。")
+                    return None
+            else:
+                return None
+        else:
+            return None
+            
+    except Exception as e:
+        print(f"  ❌ DeepSeek API调用或解析失败: {str(e)}")
         return None
-    
-    # 尝试不同长度的片段
-    for length in range(len(words), max(2, len(words) // 2), -1):
-        for start in range(len(words) - length + 1):
-            candidate = ' '.join(words[start:start + length])
-            
-            # 使用difflib进行模糊匹配
-            matcher = difflib.SequenceMatcher(None, candidate, document_text)
-            best_match = matcher.find_longest_match(0, len(candidate), 0, len(document_text))
-            
-            if best_match.size > 0:
-                matched_text = candidate[best_match.a:best_match.a + best_match.size]
-                similarity = best_match.size / len(candidate)
-                
-                if similarity >= threshold:
-                    doc_start = best_match.b
-                    doc_end = best_match.b + best_match.size
-                    return (matched_text, similarity, doc_start, doc_end)
-    
-    return None
 
 # 清理和标准化文本
 def normalize_text(text):
@@ -154,12 +216,12 @@ def convert_doc_to_docx_alternative(doc_path):
                     
                     # 复制文件到保存目录
                     shutil.copy2(converted_file, save_path)
-                    print(f"✓ mammoth转换的docx文件已保存到: {save_path}")
+                    # print(f"✓ mammoth转换的docx文件已保存到: {save_path}")
                     
-                    print(f"✓ mammoth转换成功，创建了 {len(doc.paragraphs)} 个段落")
+                    # print(f"✓ mammoth转换成功，创建了 {len(doc.paragraphs)} 个段落")
                     return converted_file
                 else:
-                    print("mammoth提取的内容为空")
+                    # print("mammoth提取的内容为空")
                     raise Exception("mammoth提取的内容为空")
                     
         except ImportError:
@@ -189,9 +251,9 @@ def convert_doc_to_docx_alternative(doc_path):
             
             # 复制文件到保存目录
             shutil.copy2(converted_file, save_path)
-            print(f"✓ python-docx直接转换的docx文件已保存到: {save_path}")
+            # print(f"✓ python-docx直接转换的docx文件已保存到: {save_path}")
             
-            print("✓ 使用python-docx直接转换成功")
+            # print("✓ 使用python-docx直接转换成功")
             return converted_file
         except Exception as e:
             print(f"python-docx直接转换失败: {e}")
@@ -243,7 +305,7 @@ def convert_doc_to_docx_alternative(doc_path):
         converted_file = os.path.join(temp_dir, f"{os.path.splitext(os.path.basename(doc_path))[0]}.docx")
         
         doc.save(converted_file)
-        print(f"备用转换完成，创建的段落数: {len(doc.paragraphs)}")
+        # print(f"备用转换完成，创建的段落数: {len(doc.paragraphs)}")
         
         # 验证转换后的文件
         try:
@@ -530,20 +592,23 @@ def insert_comment(doc, text, comment_text):
     except Exception as e:
         raise Exception(f"插入批注时出错: {str(e)}")
 
-# 从Excel文件中读取批注数据，要求Excel文件至少包含两列：原文和批注。
+# 从Excel文件中读取批注数据，要求Excel文件至少包含两列：要查找的文本和批注内容。
 def read_comments_from_excel(excel_path):
     """从Excel文件中读取批注"""
     try:
         df = pd.read_excel(excel_path)
         if len(df.columns) < 2:
-            raise Exception("Excel文件必须至少包含两列：原文和批注")
+            raise Exception("Excel文件必须至少包含两列：要查找的文本和批注内容")
             
         comments = []
+        # 将第一列作为要查找的文本，第二列作为批注内容
+        text_col, comment_col = df.columns[0], df.columns[1]
+        
         for index, row in df.iterrows():
-            if pd.notna(row[0]) and pd.notna(row[1]):  # 确保两列都有值
+            if pd.notna(row[text_col]) and pd.notna(row[comment_col]):
                 comments.append({
-                    'text': str(row[0]).strip(),
-                    'comment': str(row[1]).strip()
+                    'text': str(row[text_col]).strip(),
+                    'comment': str(row[comment_col]).strip()
                 })
         return comments
     except Exception as e:
@@ -616,8 +681,8 @@ def upload_file():
         # 读取Excel中的批注
         comments = read_comments_from_excel(excel_path)
         print("\n=== 从Excel读取到的批注 ===")
-        for comment in comments:
-            print(f"文本: {comment['text']}")
+        for i, comment in enumerate(comments):
+            print(f"序号: {comment['text']}")
             print(f"批注: {comment['comment']}")
             print("---")
             
@@ -654,31 +719,10 @@ def upload_file():
             copied_word_path = os.path.join(app.config['UPLOAD_FOLDER'], f'copied_{uuid.uuid4()}.docx')
             shutil.copy2(docx_path_for_processing, copied_word_path)
             print(f"Word文件已复制到: {copied_word_path}")
-            # 第二步：调用w-api.py插入空批注
-            print("\n=== 第二步：调用w-api.py插入空批注 ===")
-            w_api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api', 'w-api.py')
-            if os.path.exists(w_api_path):
-                try:
-                    # 直接调用w-api.py中的处理函数，而不是启动Flask服务
-                    spec = importlib.util.spec_from_file_location("w_api_module", w_api_path)
-                    w_api_module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(w_api_module)
-                    
-                    # 调用处理函数
-                    if hasattr(w_api_module, 'process_docx_file'):
-                        w_api_module.process_docx_file(copied_word_path)
-                        print("w-api.py 处理成功")
-                    else:
-                        print("警告: w-api.py 中没有找到 process_docx_file 函数")
-                        # 即使没有找到函数，也继续执行后续步骤
-                except Exception as e:
-                    print(f"调用w-api.py时出错: {str(e)}")
-                    # 即使出错，也继续执行后续步骤
-            else:
-                print(f"警告: w-api.py 文件不存在: {w_api_path}")
+
             
-            # 第三步：添加Excel中的批注内容
-            print("\n=== 第三步：添加Excel中的批注内容 ===")
+            # 第二步：添加Excel中的批注内容
+            print("\n=== 第二步：添加Excel中的批注内容 ===")
             add_comments_to_docx_xml(copied_word_path, comments, output_path)
             print(f"\n文档已保存到: {output_path}")
             
@@ -735,642 +779,132 @@ def clean_comment_text(text):
 
 # 将Excel中的批注数据插入到docx文件的XML结构中，包括在正文中插入批注标记和在comments.xml中添加批注内容。
 def add_comments_to_docx_xml(docx_path, comments, output_path):
-    print(f"\n=== 开始处理docx文件 ===")
+    print(f"\n=== 开始处理docx文件（智能精确匹配） ===")
     print(f"输入文件: {docx_path}")
     print(f"输出文件: {output_path}")
     
-    # 验证输入文件
     if not os.path.exists(docx_path):
         raise Exception(f"输入文件不存在: {docx_path}")
     
-    # 智能验证文件格式
-    file_format = None
-    try:
-        with zipfile.ZipFile(docx_path, 'r') as docx:
-            file_list = docx.namelist()
-            print(f"文件内容: {file_list}")
-            
-            # 检查不同的文档格式
-            if 'word/document.xml' in file_list:
-                file_format = 'office_open_xml'
-                print("✓ 检测到Office Open XML格式")
-            elif 'content.xml' in file_list:
-                file_format = 'opendocument'
-                print("✓ 检测到OpenDocument格式")
-            elif any(f.startswith('word/') for f in file_list):
-                file_format = 'partial_xml'
-                print("✓ 检测到部分XML格式")
-            else:
-                file_format = 'unknown'
-                print("⚠ 未知文件格式")
-                
-    except zipfile.BadZipFile:
-        raise Exception("输入文件不是有效的ZIP文件")
-    except Exception as e:
-        raise Exception(f"文件格式验证失败: {str(e)}")
-    
-    # 如果是OpenDocument格式，需要转换
-    if file_format == 'opendocument':
-        print("检测到OpenDocument格式，需要转换为Office Open XML格式")
-        # 这里可以添加转换逻辑，或者直接使用备用方法
-        raise Exception("暂不支持OpenDocument格式，请使用Office Open XML格式的文档")
-    # 如果是未知格式，尝试继续处理
-    if file_format == 'unknown':
-        print("警告: 未知文件格式，尝试继续处理")
-    
-    # 1. 解压 docx
     temp_dir = 'temp_docx_' + str(uuid.uuid4())
     os.makedirs(temp_dir, exist_ok=True)
-    print(f"临时目录: {temp_dir}")
-    
     try:
         with zipfile.ZipFile(docx_path, 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
-        print("✓ 文件解压完成")
     except Exception as e:
         raise Exception(f"文件解压失败: {str(e)}")
 
-    # 2. 解析 document.xml 和 comments.xml
     doc_xml_path = os.path.join(temp_dir, 'word', 'document.xml')
     comments_xml_path = os.path.join(temp_dir, 'word', 'comments.xml')
-    
-    # 验证解压后的文件结构
-    print(f"解压后的目录结构:")
-    for root, dirs, files in os.walk(temp_dir):
-        level = root.replace(temp_dir, '').count(os.sep)
-        indent = ' ' * 2 * level
-        print(f"{indent}{os.path.basename(root)}/")
-        subindent = ' ' * 2 * (level + 1)
-        for file in files:
-            print(f"{subindent}{file}")
-    
-    # 检查是否有word目录
-    if not os.path.exists(os.path.join(temp_dir, 'word')):
-        print("警告: 解压后没有word目录，尝试查找其他可能的文档结构")
-        
-        # 查找可能的文档文件
-        possible_docs = []
-        for root, dirs, files in os.walk(temp_dir):
-            for file in files:
-                if file.endswith('.xml') and any(keyword in file.lower() for keyword in ['document', 'content', 'text']):
-                    possible_docs.append(os.path.join(root, file))
-        
-        if possible_docs:
-            print(f"找到可能的文档文件: {possible_docs}")
-            # 使用第一个找到的文档文件
-            doc_xml_path = possible_docs[0]
-            # 创建word目录结构
-            word_dir = os.path.join(temp_dir, 'word')
-            os.makedirs(word_dir, exist_ok=True)
-            # 移动文档文件到word目录
-            new_doc_path = os.path.join(word_dir, 'document.xml')
-            shutil.move(doc_xml_path, new_doc_path)
-            doc_xml_path = new_doc_path
-            print(f"已将文档文件移动到: {doc_xml_path}")
-        else:
-            # 如果没有找到任何XML文件，尝试创建基本的文档结构
-            print("没有找到任何文档文件，创建基本结构")
-            word_dir = os.path.join(temp_dir, 'word')
-            os.makedirs(word_dir, exist_ok=True)
-            
-            # 创建基本的document.xml
-            basic_doc_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-    <w:body>
-        <w:p>
-            <w:r>
-                <w:t>文档内容</w:t>
-            </w:r>
-        </w:p>
-    </w:body>
-</w:document>'''
-            
-            with open(doc_xml_path, 'w', encoding='utf-8') as f:
-                f.write(basic_doc_xml)
-            print(f"创建了基本的document.xml: {doc_xml_path}")
-    else:
-        # 有word目录，检查document.xml
-        if not os.path.exists(doc_xml_path):
-            # 尝试查找其他可能的文档文件
-            word_dir = os.path.join(temp_dir, 'word')
-            word_files = os.listdir(word_dir)
-            print(f"word目录下的文件: {word_files}")
-            
-            # 查找可能的文档文件
-            possible_docs = [f for f in word_files if f.endswith('.xml') and 'document' in f.lower()]
-            if possible_docs:
-                doc_xml_path = os.path.join(word_dir, possible_docs[0])
-                print(f"使用找到的文档文件: {possible_docs[0]}")
-            else:
-                raise Exception(f"解压后找不到document.xml或其他文档文件")
-    
-    print(f"document.xml路径: {doc_xml_path}")
-    print(f"comments.xml路径: {comments_xml_path}")
-    
-    # 定义Word命名空间
     w_ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    
-    # 解析文档
-    try:
-        # 使用更宽松的XML解析器
-        parser = etree.XMLParser(remove_blank_text=True, recover=True)
-        doc_tree = etree.parse(doc_xml_path, parser)
-        doc_root = doc_tree.getroot()
-        
-        # 检查命名空间映射
-        print(f"文档命名空间: {doc_root.nsmap}")
-        
-        # 添加调试信息：检查文档内容
-        print("\n=== 文档内容调试信息 ===")
-        paragraphs = doc_root.findall('.//w:p', namespaces={'w': w_ns})
-        print(f"找到段落数量: {len(paragraphs)}")
-        
-        for i, para in enumerate(paragraphs[:5]):  # 只显示前5个段落
-            para_text = ''.join([t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
-            if para_text.strip():
-                print(f"段落{i+1}: '{para_text[:100]}{'...' if len(para_text) > 100 else ''}'")
-        
-        if len(paragraphs) > 5:
-            print(f"... 还有 {len(paragraphs) - 5} 个段落")
-        
-        # 检查所有文本内容
-        all_text = ''.join([t.text for t in doc_root.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
-        print(f"文档总文本长度: {len(all_text)}")
-        if all_text.strip():
-            print(f"文档前200字符: '{all_text[:200]}{'...' if len(all_text) > 200 else ''}'")
-        else:
-            print("⚠ 警告: 文档中没有找到任何文本内容")
-        
-        # 如果缺少Word命名空间，重新创建文档
-        if 'w' not in doc_root.nsmap:
-            print("警告: 文档缺少Word命名空间，重新创建文档结构")
-            
-            # 创建新的文档根元素，包含正确的命名空间
-            new_root = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document',
-                                   nsmap={'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'})
-            
-            # 创建body元素
-            body = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body')
-            
-            # 尝试从原文档中提取内容
-            try:
-                # 查找所有段落
-                paragraphs = doc_root.findall('.//*[local-name()="p"]')
-                if not paragraphs:
-                    # 如果没有找到段落，创建一个默认段落
-                    p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
-                    r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
-                    t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
-                    t.text = "文档内容"
-                    r.append(t)
-                    p.append(r)
-                    body.append(p)
-                else:
-                    # 转换现有段落到正确的命名空间
-                    for old_p in paragraphs:
-                        p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
-                        # 复制文本内容
-                        for old_r in old_p.findall('.//*[local-name()="r"]'):
-                            r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
-                            for old_t in old_r.findall('.//*[local-name()="t"]'):
-                                if old_t.text:
-                                    t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
-                                    t.text = old_t.text
-                                    r.append(t)
-                            if len(r) > 0:
-                                p.append(r)
-                        if len(p) > 0:
-                            body.append(p)
-            except Exception as e:
-                print(f"转换文档内容时出错: {e}")
-                # 创建默认段落
-                p = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
-                r = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
-                t = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
-                t.text = "文档内容"
-                r.append(t)
-                p.append(r)
-                body.append(p)
-            
-            new_root.append(body)
-            
-            # 更新文档树
-            doc_root = new_root
-            doc_tree = etree.ElementTree(doc_root)
-            
-            print("✓ 重新创建了文档结构")
-        
-        print("✓ document.xml解析成功")
-    except Exception as e:
-        raise Exception(f"document.xml解析失败: {str(e)}")
-    
-    # 清理文档中的旧批注标记（覆盖w-api.py插入的空批注）
-    print("清理现有的批注标记...")
-    
-    for elem in doc_root.findall('.//w:commentRangeStart', namespaces={'w': w_ns}):
-        elem.getparent().remove(elem)
-    for elem in doc_root.findall('.//w:commentRangeEnd', namespaces={'w': w_ns}):
-        elem.getparent().remove(elem)
-    for elem in doc_root.findall('.//w:commentReference', namespaces={'w': w_ns}):
-        elem.getparent().remove(elem)
-    
-    # 创建新的comments.xml（覆盖现有的）
+    parser = etree.XMLParser(remove_blank_text=True, recover=True)
+    doc_tree = etree.parse(doc_xml_path, parser)
+    doc_root = doc_tree.getroot()
+    paragraphs = doc_root.findall('.//w:p', namespaces={'w': w_ns})
+
     MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
-    comments_root = etree.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}comments', 
-                                nsmap={'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
-                                      'mc': MC_NS})
-    # 添加必需的兼容性属性
+    comments_root = etree.Element(f'{{{w_ns}}}comments', nsmap={'w': w_ns, 'mc': MC_NS})
     comments_root.set(f"{{{MC_NS}}}Ignorable", "w14 w15 wp14")
     comments_tree = etree.ElementTree(comments_root)
-    print("创建新的comments.xml，覆盖现有批注")
-    
-    # 4. 遍历每个批注，插入到正文和comments.xml
-    print("\n=== 开始插入批注 ===")
-    print(f"总批注数量: {len(comments)}")
 
-    used_ids = []
     current_id = 0
-    for item in comments:
-        text = item['text'].strip()
-        comment_text = item['comment'].strip()
+    # 提取所有批注内容，并创建一个副本用于管理是否已使用
+    comment_texts = [item['comment'].strip() for item in comments if item.get('comment', '').strip()]
+    
+    # 遍历文档中的每个段落
+    for para_idx, para in enumerate(paragraphs):
+        para_text = ''.join(t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text)
+        para_text = para_text.strip()
+        
+        if not para_text or not comment_texts:
+            continue
+            
+        # 步骤 1: 使用DeepSeek为当前段落寻找最匹配的批注和对应的原文
+        match = deepseek_text_match(para_text, comment_texts, threshold=0.75) # 提高阈值以增加准确性
+        if not match:
+            continue
+
+        text_to_find, original_comment, _, comment_idx, reasoning = match
+        # 使用模型生成的原因为批注内容，如果为空则回退到原始批注
+        comment_content = reasoning.strip() if reasoning and reasoning.strip() else original_comment
         comment_id = str(current_id)
-        found = False
         
-        # 改进的文本匹配逻辑：支持跨段落和跨运行匹配
-        print(f"\n查找文本: '{text}'")
+        print(f"  ✓ 段落 {para_idx} 匹配到批注: '{original_comment}'")
+        print(f"    应附着于文本: '{text_to_find}'")
+        print(f"    匹配的原因: '{comment_content}'")
+
+        # 步骤 2: 在该段落内进行精确的跨run文本定位
+        runs = para.findall('.//w:r', namespaces={'w': w_ns})
+        run_map = []
+        full_para_text = ""
+        for i, run in enumerate(runs):
+            run_text = "".join(t.text for t in run.findall('.//w:t', namespaces={'w': w_ns}) if t.text)
+            if run_text:
+                run_map.append({'run': run, 'text': run_text, 'start': len(full_para_text)})
+                full_para_text += run_text
         
-        # 获取整个文档的文本用于模糊匹配
-        all_doc_text = ''.join([t.text for t in doc_root.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
-        normalized_doc_text = normalize_text(all_doc_text)
-        normalized_target_text = normalize_text(text)
+        start_pos = full_para_text.find(text_to_find)
+        if start_pos == -1:
+            print(f"    ⚠ 在段落 {para_idx} 中未精确定位到模型返回的文本，跳过。")
+            continue
         
-        print(f"文档文本长度: {len(normalized_doc_text)}")
-        print(f"目标文本: '{normalized_target_text}'")
+        end_pos = start_pos + len(text_to_find)
+
+        # 步骤 3: 确定目标文本覆盖了哪些run
+        start_run_idx, end_run_idx = -1, -1
+        for i, r_info in enumerate(run_map):
+            run_end_pos = r_info['start'] + len(r_info['text'])
+            if start_run_idx == -1 and start_pos < run_end_pos:
+                start_run_idx = i
+            if end_run_idx == -1 and end_pos <= run_end_pos:
+                end_run_idx = i
+                break
         
-        # 方法1：尝试在单个段落内匹配
-        for para in doc_root.findall('.//w:p', namespaces={'w': w_ns}):
-            para_text = ''.join([t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
-            normalized_para_text = normalize_text(para_text)
-            
-            if normalized_target_text in normalized_para_text:
-                print(f"在段落中找到文本: '{text}'")
-                # 在段落内查找具体的运行
-                for run in para.findall('.//w:r', namespaces={'w': w_ns}):
-                    t = run.find('.//w:t', namespaces={'w': w_ns})
-                    if t is not None and text in t.text:
-                        print(f"在运行中找到完整文本")
-                        before, after = t.text.split(text, 1)
-                        parent = run.getparent()
-                        idx_run = parent.index(run)
+        if start_run_idx == -1: continue
+        if end_run_idx == -1: end_run_idx = len(run_map) - 1
 
-                        if parent.tag != W('p'):
-                            print(f"警告: run 的 parent 不是 <w:p>，而是 {parent.tag}，跳过该批注")
-                            continue
+        # 步骤 4: 执行XML操作
+        first_run_to_wrap = run_map[start_run_idx]['run']
+        last_run_to_wrap = run_map[end_run_idx]['run']
+        parent = first_run_to_wrap.getparent()
 
-                        # 前半部分
-                        if before:
-                            t.text = before
-                            insert_idx = idx_run + 1
-                        else:
-                            parent.remove(run)
-                            insert_idx = idx_run
-
-                        # commentRangeStart
-                        comment_start = etree.Element(W('commentRangeStart'))
-                        comment_start.set(W('id'), comment_id)
-                        parent.insert(insert_idx, comment_start)
-                        insert_idx += 1
-
-                        # 被批注文本
-                        new_run = etree.Element(W('r'))
-                        new_t = etree.Element(W('t'))
-                        new_t.text = text
-                        new_run.append(new_t)
-                        parent.insert(insert_idx, new_run)
-                        insert_idx += 1
-
-                        # commentRangeEnd
-                        comment_end = etree.Element(W('commentRangeEnd'))
-                        comment_end.set(W('id'), comment_id)
-                        parent.insert(insert_idx, comment_end)
-                        insert_idx += 1
-
-                        # commentReference
-                        comment_ref_run = etree.Element(W('r'))
-                        comment_ref = etree.Element(W('commentReference'))
-                        comment_ref.set(W('id'), comment_id)
-                        comment_ref_run.append(comment_ref)
-                        parent.insert(insert_idx, comment_ref_run)
-                        insert_idx += 1
-
-                        # 后半部分
-                        if after:
-                            after_run = etree.Element(W('r'))
-                            after_t = etree.Element(W('t'))
-                            after_t.text = after
-                            after_run.append(after_t)
-                            parent.insert(insert_idx, after_run)
-
-                        found = True
-                        break
-                if found:
-                    break
+        comment_start_node = etree.Element(W('commentRangeStart'))
+        comment_start_node.set(W('id'), comment_id)
+        parent.insert(parent.index(first_run_to_wrap), comment_start_node)
         
-        # 方法2：如果方法1失败，尝试跨运行匹配
-        if not found:
-            print(f"尝试跨运行匹配文本: '{text}'")
-            for para in doc_root.findall('.//w:p', namespaces={'w': w_ns}):
-                runs = para.findall('.//w:r', namespaces={'w': w_ns})
-                para_text = ''.join([t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
-                normalized_para_text = normalize_text(para_text)
-                
-                if normalized_target_text in normalized_para_text:
-                    print(f"在段落中找到跨运行文本: '{text}'")
-                    # 找到文本在段落中的位置
-                    text_start = normalized_para_text.find(normalized_target_text)
-                    text_end = text_start + len(normalized_target_text)
-                    
-                    # 计算文本跨越的运行
-                    current_pos = 0
-                    start_run_idx = -1
-                    end_run_idx = -1
-                    start_run_offset = 0
-                    end_run_offset = 0
-                    
-                    for i, run in enumerate(runs):
-                        t = run.find('.//w:t', namespaces={'w': w_ns})
-                        if t is not None and t.text:
-                            run_length = len(t.text)
-                            if start_run_idx == -1 and current_pos + run_length > text_start:
-                                start_run_idx = i
-                                start_run_offset = text_start - current_pos
-                            if end_run_idx == -1 and current_pos + run_length >= text_end:
-                                end_run_idx = i
-                                end_run_offset = text_end - current_pos
-                                break
-                            current_pos += run_length
-                    
-                    if start_run_idx != -1 and end_run_idx != -1:
-                        print(f"跨运行匹配成功: 从运行{start_run_idx}到运行{end_run_idx}")
-                        # 执行跨运行插入
-                        parent = runs[0].getparent()
-                        
-                        # 插入commentRangeStart
-                        comment_start = etree.Element(W('commentRangeStart'))
-                        comment_start.set(W('id'), comment_id)
-                        parent.insert(parent.index(runs[start_run_idx]), comment_start)
-                        
-                        # 处理第一个运行
-                        first_run = runs[start_run_idx]
-                        first_t = first_run.find('.//w:t', namespaces={'w': w_ns})
-                        if first_t is not None:
-                            before_text = first_t.text[:start_run_offset]
-                            if before_text:
-                                first_t.text = before_text
-                            else:
-                                parent.remove(first_run)
-                        
-                        # 插入被批注文本
-                        new_run = etree.Element(W('r'))
-                        new_t = etree.Element(W('t'))
-                        new_t.text = text
-                        new_run.append(new_t)
-                        parent.insert(parent.index(runs[start_run_idx] if start_run_idx < len(runs) else parent[-1]), new_run)
-                        
-                        # 处理最后一个运行
-                        if end_run_idx != start_run_idx:
-                            last_run = runs[end_run_idx]
-                            last_t = last_run.find('.//w:t', namespaces={'w': w_ns})
-                            if last_t is not None:
-                                after_text = last_t.text[end_run_offset:]
-                                if after_text:
-                                    last_t.text = after_text
-                                else:
-                                    parent.remove(last_run)
-                        
-                        # 删除中间的所有运行
-                        for i in range(start_run_idx + 1, end_run_idx):
-                            if i < len(runs):
-                                parent.remove(runs[i])
-                        
-                        # 插入commentRangeEnd
-                        comment_end = etree.Element(W('commentRangeEnd'))
-                        comment_end.set(W('id'), comment_id)
-                        parent.append(comment_end)
-                        
-                        # 插入commentReference
-                        comment_ref_run = etree.Element(W('r'))
-                        comment_ref = etree.Element(W('commentReference'))
-                        comment_ref.set(W('id'), comment_id)
-                        comment_ref_run.append(comment_ref)
-                        parent.append(comment_ref_run)
-                        
-                        found = True
-                        break
+        comment_end_node = etree.Element(W('commentRangeEnd'))
+        comment_end_node.set(W('id'), comment_id)
+        parent.insert(parent.index(last_run_to_wrap) + 1, comment_end_node)
+
+        comment_ref_run = etree.Element(W('r'))
+        comment_ref_node = etree.Element(W('commentReference'))
+        comment_ref_node.set(W('id'), comment_id)
+        comment_ref_run.append(comment_ref_node)
+        parent.insert(parent.index(comment_end_node) + 1, comment_ref_run)
+
+        # 步骤 5: 创建批注内容到comments.xml
+        comment_elem = etree.Element(W('comment'))
+        comment_elem.set(W('id'), comment_id)
+        comment_elem.set(W('author'), '批注系统')
+        comment_elem.set(W('date'), '2024-03-14T12:00:00Z')
+        p = etree.Element(W('p'))
+        r = etree.Element(W('r'))
+        t = etree.Element(W('t'))
+        t.text = clean_comment_text(comment_content)
+        r.append(t)
+        p.append(r)
+        comment_elem.append(p)
+        comments_root.append(comment_elem)
         
-        # 方法3：如果前两种方法都失败，尝试模糊匹配
-        if not found:
-            print(f"尝试模糊匹配文本: '{text}'")
-            # 可以调整这个阈值来控制匹配的严格程度
-            # 0.9 = 非常严格 (90%相似度)
-            # 0.8 = 严格 (80%相似度) 
-            # 0.7 = 中等 (70%相似度) - 当前设置
-            # 0.6 = 宽松 (60%相似度)
-            # 0.5 = 非常宽松 (50%相似度)
-            match_result = find_best_text_match(normalized_target_text, normalized_doc_text, threshold=0.7)
-            
-            if match_result:
-                matched_text, similarity, start_pos, end_pos = match_result
-                print(f"模糊匹配成功: 相似度 {similarity:.2f}, 匹配文本: '{matched_text}'")
-                
-                # 在文档中定位匹配的段落
-                for para in doc_root.findall('.//w:p', namespaces={'w': w_ns}):
-                    para_text = ''.join([t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
-                    normalized_para_text = normalize_text(para_text)
-                    
-                    if matched_text in normalized_para_text:
-                        print(f"在段落中找到模糊匹配文本")
-                        # 使用匹配到的文本进行插入
-                        runs = para.findall('.//w:r', namespaces={'w': w_ns})
-                        para_text_full = ''.join([t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text])
-                        
-                        # 找到匹配文本在段落中的位置
-                        text_start = para_text_full.find(matched_text)
-                        text_end = text_start + len(matched_text)
-                        
-                        # 计算文本跨越的运行
-                        current_pos = 0
-                        start_run_idx = -1
-                        end_run_idx = -1
-                        start_run_offset = 0
-                        end_run_offset = 0
-                        
-                        for i, run in enumerate(runs):
-                            t = run.find('.//w:t', namespaces={'w': w_ns})
-                            if t is not None and t.text:
-                                run_length = len(t.text)
-                                if start_run_idx == -1 and current_pos + run_length > text_start:
-                                    start_run_idx = i
-                                    start_run_offset = text_start - current_pos
-                                if end_run_idx == -1 and current_pos + run_length >= text_end:
-                                    end_run_idx = i
-                                    end_run_offset = text_end - current_pos
-                                    break
-                                current_pos += run_length
-                        
-                        if start_run_idx != -1 and end_run_idx != -1:
-                            print(f"模糊匹配跨运行成功: 从运行{start_run_idx}到运行{end_run_idx}")
-                            # 执行跨运行插入
-                            parent = runs[0].getparent()
-                            
-                            # 插入commentRangeStart
-                            comment_start = etree.Element(W('commentRangeStart'))
-                            comment_start.set(W('id'), comment_id)
-                            parent.insert(parent.index(runs[start_run_idx]), comment_start)
-                            
-                            # 处理第一个运行
-                            first_run = runs[start_run_idx]
-                            first_t = first_run.find('.//w:t', namespaces={'w': w_ns})
-                            if first_t is not None:
-                                before_text = first_t.text[:start_run_offset]
-                                if before_text:
-                                    first_t.text = before_text
-                                else:
-                                    parent.remove(first_run)
-                            
-                            # 插入被批注文本（使用原始目标文本）
-                            new_run = etree.Element(W('r'))
-                            new_t = etree.Element(W('t'))
-                            new_t.text = text
-                            new_run.append(new_t)
-                            parent.insert(parent.index(runs[start_run_idx] if start_run_idx < len(runs) else parent[-1]), new_run)
-                            
-                            # 处理最后一个运行
-                            if end_run_idx != start_run_idx:
-                                last_run = runs[end_run_idx]
-                                last_t = last_run.find('.//w:t', namespaces={'w': w_ns})
-                                if last_t is not None:
-                                    after_text = last_t.text[end_run_offset:]
-                                    if after_text:
-                                        last_t.text = after_text
-                                    else:
-                                        parent.remove(last_run)
-                            
-                            # 删除中间的所有运行
-                            for i in range(start_run_idx + 1, end_run_idx):
-                                if i < len(runs):
-                                    parent.remove(runs[i])
-                            
-                            # 插入commentRangeEnd
-                            comment_end = etree.Element(W('commentRangeEnd'))
-                            comment_end.set(W('id'), comment_id)
-                            parent.append(comment_end)
-                            
-                            # 插入commentReference
-                            comment_ref_run = etree.Element(W('r'))
-                            comment_ref = etree.Element(W('commentReference'))
-                            comment_ref.set(W('id'), comment_id)
-                            comment_ref_run.append(comment_ref)
-                            parent.append(comment_ref_run)
-                            
-                            found = True
-                            break
-        
-        if found:
-            # 只有插入成功的批注才写入 comments.xml
-            comment_elem = etree.Element(W('comment'))
-            comment_elem.set(W('id'), comment_id)
-            comment_elem.set(W('author'), '批注系统')
-            comment_elem.set(W('date'), '2024-03-14T12:00:00Z')
-            p = etree.Element(W('p'))
-            r = etree.Element(W('r'))
-            t = etree.Element(W('t'))
-            t.text = clean_comment_text(comment_text)
-            r.append(t)
-            p.append(r)
-            comment_elem.append(p)
-            comments_root.append(comment_elem)
-            print(f"✓ 成功插入批注内容")
-            used_ids.append(current_id)
-            current_id += 1
-        else:
-            print(f"⚠ 未找到文本 '{text}'，插入到文档最后一页新段落并标注未成功匹配")
-            # 新建一个段落
-            new_para = etree.Element(W('p'))
-
-            # 插入 commentRangeStart
-            comment_start = etree.Element(W('commentRangeStart'))
-            comment_start.set(W('id'), comment_id)
-            new_para.append(comment_start)
-
-            # 插入特殊文本
-            new_run = etree.Element(W('r'))
-            new_t = etree.Element(W('t'))
-            new_t.text = f"【未成功匹配】{text}"
-            new_run.append(new_t)
-            new_para.append(new_run)
-
-            # commentRangeEnd
-            comment_end = etree.Element(W('commentRangeEnd'))
-            comment_end.set(W('id'), comment_id)
-            new_para.append(comment_end)
-
-            # commentReference
-            comment_ref_run = etree.Element(W('r'))
-            comment_ref = etree.Element(W('commentReference'))
-            comment_ref.set(W('id'), comment_id)
-            comment_ref_run.append(comment_ref)
-            new_para.append(comment_ref_run)
-
-            # 把新段落加到文档最后
-            body = doc_root.find('.//w:body', namespaces={'w': w_ns})
-            body.append(new_para)
-
-            # 写入 comments.xml，内容前加提示
-            comment_elem = etree.Element(W('comment'))
-            comment_elem.set(W('id'), comment_id)
-            comment_elem.set(W('author'), '批注系统')
-            comment_elem.set(W('date'), '2024-03-14T12:00:00Z')
-            p = etree.Element(W('p'))
-            r = etree.Element(W('r'))
-            t = etree.Element(W('t'))
-            t.text = clean_comment_text(f"【未成功匹配】{comment_text}")
-            r.append(t)
-            p.append(r)
-            comment_elem.append(p)
-            comments_root.append(comment_elem)
-            used_ids.append(current_id)
-            current_id += 1
-
-    print("\n=== 批注插入完成 ===")
-    print(f"处理的批注数: {len(comments)}")
-
-    # 统计和输出
-    if used_ids:
-        print(f"已分配的批注id: {used_ids}")
-        print(f"最大id: {max(used_ids)}")
-        # 检查是否连续
-        expected_ids = list(range(min(used_ids), max(used_ids)+1))
-        if used_ids == expected_ids:
-            print("id是连续的")
-        else:
-            print("id不是连续的，缺失: ", set(expected_ids) - set(used_ids))
-    else:
-        print("没有插入任何批注，id列表为空")
-
-    print("批注id来自变量 current_id，每插入一个成功的批注 current_id += 1")
-
-    # 5. 保存修改后的XML
-    try:
-        # 确保XML文件有正确的编码和声明
-        doc_tree.write(doc_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
-        comments_tree.write(comments_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
-        print("✓ XML文件保存成功")
-    except Exception as e:
-        raise Exception(f"保存XML文件失败: {str(e)}")
-
+        print(f"    ✓ 成功插入批注。")
+        current_id += 1
+    
+    # 保存XML
+    doc_tree.write(doc_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
+    comments_tree.write(comments_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
+    
     # 6. 打包为新的docx文件
-    print("\n=== 第六步：打包为新的docx文件 ===")
+    print("\n=== 第四步：打包为新的docx文件 ===")
     
     # 确保 word/_rels/document.xml.rels 文件存在并包含批注关系
     rels_path = os.path.join(temp_dir, 'word', '_rels', 'document.xml.rels')
@@ -1454,9 +988,9 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                 if os.path.exists(file_path):
                     try:
                         docx.write(file_path, file_name)
-                        print(f"✓ 添加文件: {file_name}")
+                        # print(f"✓ 添加文件: {file_name}")
                     except Exception as e:
-                        print(f"警告: 写入文件 {file_name} 时出错: {str(e)}")
+                        # print(f"警告: 写入文件 {file_name} 时出错: {str(e)}")
                         continue
             
             # 然后添加其他文件
@@ -1471,7 +1005,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                     
                     try:
                         docx.write(file_path, arcname)
-                        print(f"✓ 添加文件: {arcname}")
+                        # print(f"✓ 添加文件: {arcname}")
                     except Exception as e:
                         print(f"警告: 写入文件 {arcname} 时出错: {str(e)}")
                         continue
@@ -1529,36 +1063,8 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     except Exception as e:
         print(f"调试检查时出错: {str(e)}")
 
-    # 维护 word/_rels/document.xml.rels
-    rels_path = os.path.join(temp_dir, 'word', '_rels', 'document.xml.rels')
-    if os.path.exists(rels_path):
-        rels_tree = etree.parse(rels_path)
-        rels_root = rels_tree.getroot()
-        # 检查是否已有 comments 关系
-        has_comments_rel = any(
-            rel.get('Type') == 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments'
-            for rel in rels_root.findall('.//{http://schemas.openxmlformats.org/package/2006/relationships}Relationship')
-        )
-        if not has_comments_rel:
-            # 添加 comments 关系
-            rel = etree.Element('{http://schemas.openxmlformats.org/package/2006/relationships}Relationship')
-            rel.set('Id', 'rIdComments')
-            rel.set('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments')
-            rel.set('Target', 'comments.xml')
-            rels_root.append(rel)
-            rels_tree.write(rels_path, xml_declaration=True, encoding='utf-8', standalone='yes')
-    else:
-        # 如果没有rels文件，创建一个
-        rels_dir = os.path.dirname(rels_path)
-        os.makedirs(rels_dir, exist_ok=True)
-        rels_root = etree.Element('Relationships', nsmap={None: 'http://schemas.openxmlformats.org/package/2006/relationships'})
-        rel = etree.Element('Relationship')
-        rel.set('Id', 'rIdComments')
-        rel.set('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments')
-        rel.set('Target', 'comments.xml')
-        rels_root.append(rel)
-        rels_tree = etree.ElementTree(rels_root)
-        rels_tree.write(rels_path, xml_declaration=True, encoding='utf-8', standalone='yes')
+    print(f"✓ 最终输出文件: {output_path}")
+    return output_path
 
 # 使用LibreOffice将.docx文件转换为.doc格式，并重命名输出文件到指定路径。
 def convert_docx_to_doc(docx_path, doc_path):
