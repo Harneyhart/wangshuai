@@ -7,6 +7,7 @@ from flask import Flask, request, send_file, render_template, redirect, url_for,
 from lxml import etree
 from lxml.etree import QName
 import uuid
+import datetime
 
 app = Flask(__name__)
 app.secret_key = 'replace-with-your-own-secret'  # 用于 flash 消息显示
@@ -138,7 +139,7 @@ def upload():
                 W("id"): cid,
                 W("author"): "AI编辑",
                 W("initials"): "AI",
-                W("date"): "2025-06-05T12:00:00Z",
+                W("date"): datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
             })
 
             p_comment = etree.SubElement(comment, W("p"))
@@ -334,7 +335,7 @@ def process_docx_file(docx_path):
                 W("id"): cid,
                 W("author"): "AI编辑",
                 W("initials"): "AI",
-                W("date"): "2025-06-05T12:00:00Z",
+                W("date"): datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
             })
 
             p_comment = etree.SubElement(comment, W("p"))

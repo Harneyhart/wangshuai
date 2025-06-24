@@ -30,7 +30,7 @@ def W(tag): return f"{{{W_NS}}}{tag}"
 DEEPSEEK_API_KEY = 'sk-44707dc99db4416c9d21260fb0d9f6bc'
 DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions'
 
-def deepseek_text_match(target_text, doc_texts, threshold=0.7):
+def deepseek_text_match(target_text, doc_texts, threshold=0.9):
     """
     用DeepSeek大模型为段落寻找最匹配的批注，并返回该批注应附着的具体文本。
     target_text: docx文档中的段落文本
@@ -557,7 +557,7 @@ def insert_comment(doc, text, comment_text):
                         comment = create_element('w:comment')
                         create_attribute(comment, 'w:id', comment_id)
                         create_attribute(comment, 'w:author', '批注系统')
-                        create_attribute(comment, 'w:date', '2024-03-14T12:00:00Z')
+                        create_attribute(comment, 'w:date', datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
                         create_attribute(comment, 'w:initials', 'PS')
                         
                         # 创建批注内容
@@ -820,7 +820,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             continue
             
         # 步骤 1: 使用DeepSeek为当前段落寻找最匹配的批注和对应的原文
-        match = deepseek_text_match(para_text, comment_texts, threshold=0.75) # 提高阈值以增加准确性
+        match = deepseek_text_match(para_text, comment_texts, threshold=0.9) # 提高阈值以增加准确性
         if not match:
             continue
 
@@ -869,25 +869,51 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         last_run_to_wrap = run_map[end_run_idx]['run']
         parent = first_run_to_wrap.getparent()
 
+        # 安全检查：确保元素仍然在正确的父节点中
+        if first_run_to_wrap.getparent() != parent or last_run_to_wrap.getparent() != parent:
+            print(f"    警告：跳过此批注，元素位置已改变")
+            continue
+
         comment_start_node = etree.Element(W('commentRangeStart'))
         comment_start_node.set(W('id'), comment_id)
-        parent.insert(parent.index(first_run_to_wrap), comment_start_node)
+        
+        # 安全插入：检查索引是否有效
+        try:
+            first_run_index = parent.index(first_run_to_wrap)
+            parent.insert(first_run_index, comment_start_node)
+        except (ValueError, IndexError) as e:
+            print(f"    警告：插入commentRangeStart失败: {e}")
+            continue
         
         comment_end_node = etree.Element(W('commentRangeEnd'))
         comment_end_node.set(W('id'), comment_id)
-        parent.insert(parent.index(last_run_to_wrap) + 1, comment_end_node)
+        
+        # 安全插入：检查索引是否有效
+        try:
+            last_run_index = parent.index(last_run_to_wrap)
+            parent.insert(last_run_index + 1, comment_end_node)
+        except (ValueError, IndexError) as e:
+            print(f"    警告：插入commentRangeEnd失败: {e}")
+            continue
 
         comment_ref_run = etree.Element(W('r'))
         comment_ref_node = etree.Element(W('commentReference'))
         comment_ref_node.set(W('id'), comment_id)
         comment_ref_run.append(comment_ref_node)
-        parent.insert(parent.index(comment_end_node) + 1, comment_ref_run)
+        
+        # 安全插入：检查索引是否有效
+        try:
+            end_node_index = parent.index(comment_end_node)
+            parent.insert(end_node_index + 1, comment_ref_run)
+        except (ValueError, IndexError) as e:
+            print(f"    警告：插入commentReference失败: {e}")
+            continue
 
         # 步骤 5: 创建批注内容到comments.xml
         comment_elem = etree.Element(W('comment'))
         comment_elem.set(W('id'), comment_id)
         comment_elem.set(W('author'), '批注系统')
-        comment_elem.set(W('date'), '2024-03-14T12:00:00Z')
+        comment_elem.set(W('date'), datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
 
         # 第一行：批注内容
         p1 = etree.Element(W('p'))
@@ -906,9 +932,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         r2.append(t2)
         p2.append(r2)
         comment_elem.append(p2)
-
         comments_root.append(comment_elem)
-        
         print(f"    ✓ 成功插入批注。")
         current_id += 1
     
