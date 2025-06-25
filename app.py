@@ -1,4 +1,3 @@
-import io
 import os
 import shutil
 import zipfile
@@ -6,17 +5,14 @@ import pandas as pd
 from flask import Flask, request, send_file, render_template, redirect, url_for, flash, jsonify
 from lxml import etree
 from lxml.etree import QName
-import difflib
 import re
 import subprocess
 import tempfile
-import sys
 from docx import Document
 from werkzeug.utils import secure_filename
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import uuid
-import importlib.util
 import datetime
 import requests
 import numpy as np
@@ -126,7 +122,7 @@ def classify_questions_with_ai(question_numbers, full_text):
     }
     
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=60)
         if response.status_code != 200:
             print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
             return question_numbers, []
@@ -274,12 +270,12 @@ def add_title_comments_to_docx(docx_path, categories, output_path):
                 file_path = os.path.join(foldername, filename)
                 arcname = os.path.relpath(file_path, temp_dir)
                 docx.write(file_path, arcname)
-    
+
     # 清理临时文件夹
     shutil.rmtree(temp_dir)
     print(f"✓ 分类标题批注已添加到: {output_path}")
 
-def deepseek_context_aware_match(target_text, doc_texts, context_text="", threshold=0.9):
+def deepseek_context_aware_match(target_text, doc_texts, context_text="", threshold=0.7):
     """
     上下文感知的DeepSeek批注匹配，优先考虑上下文
     target_text: 当前段落文本
@@ -310,6 +306,8 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 3. 上下文分析：考虑同一标题下的前后段落，帮助判断是否真的存在错误
 4. 语义相关性：段落内容与批注在语义上是否高度相关
 5. 精确性：批注是否针对段落中的特定错误内容
+6. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本
+7. 全局性批注：如果批注是对整个文档的宏观评价或建议，标记为global_comment类型
 
 请严格按照以下JSON格式返回结果：
 {
@@ -319,7 +317,8 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "target_text_in_paragraph": "从段落中抽出的、批注应附着的原文（必须是段落的子串）",
     "has_error": true/false(是否发现明显错误),
     "error_type": "错误类型（如：日期错误、数字错误、名称错误等）",
-    "context_analysis": "对同一标题下上下文的分析"
+    "context_analysis": "对同一标题下上下文的分析",
+    "comment_type": "批注类型：specific_error(具体错误) 或 global_comment(全局性批注)"
 }
 
 如果没有任何批注适合该段落，返回：
@@ -330,7 +329,8 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "target_text_in_paragraph": null,
     "has_error": false,
     "error_type": null,
-    "context_analysis": "上下文分析"
+    "context_analysis": "上下文分析",
+    "comment_type": "none"
 }"""
 
     user_prompt = f"""当前段落文本：
@@ -342,7 +342,10 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 候选批注：
 {chr(10).join(candidate_comments)}
 
-请分析上述段落、上下文和批注，找出最匹配的组合，并按要求返回JSON。特别注意识别明显的错误，无论文本长度如何。"""
+请分析上述段落、上下文和批注，找出最匹配的组合，并按要求返回JSON。特别注意：
+1. 识别明显的错误，无论文本长度如何。
+2. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本
+3. 如果批注是对整个文档的宏观评价或建议，标记为global_comment类型"""
 
     data = {
         "model": "deepseek-chat",
@@ -356,7 +359,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     }
     
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=60)
         if response.status_code != 200:
             print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
             return None
@@ -374,33 +377,42 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
         has_error = match_result.get('has_error', False)
         error_type = match_result.get('error_type', '')
         context_analysis = match_result.get('context_analysis', '')
+        comment_type = match_result.get('comment_type', 'specific_error')
         
         print(f"  AI分析结果:")
         print(f"    匹配索引: {best_index}")
         print(f"    相似度: {similarity_score}")
         print(f"    发现错误: {has_error}")
         print(f"    错误类型: {error_type}")
+        print(f"    批注类型: {comment_type}")
         print(f"    上下文分析: {context_analysis}")
         
-        # 只要发现明显错误且相似度达到阈值就返回匹配
+        # 处理全局性批注和具体错误批注
         if (best_index is not None and 
             similarity_score >= threshold and 
-            text_in_para and 
-            has_error):
+            (has_error or comment_type == 'global_comment')):
             
             actual_index = best_index - 1
             if 0 <= actual_index < len(doc_texts):
                 matched_comment = doc_texts[actual_index]
-                if text_in_para in target_text:
-                    return text_in_para, matched_comment, similarity_score, actual_index, reasoning, context_analysis, error_type
+                
+                # 对于全局性批注，使用段落开头作为锚点
+                if comment_type == 'global_comment':
+                    # 使用段落开头的实际文本，不添加省略号
+                    text_in_para = target_text[:50] if len(target_text) > 50 else target_text
+                    print(f"  ✓ 全局性批注，使用段落开头作为锚点: '{text_in_para}'")
+                
+                # 验证文本是否在段落中
+                if text_in_para and text_in_para in target_text:
+                    return text_in_para, matched_comment, similarity_score, actual_index, reasoning, context_analysis, error_type, comment_type
                 else:
                     print(f"  ❌ 模型返回的文本 '{text_in_para}' 不在段落中。")
                     return None
             else:
                 return None
         else:
-            if not has_error:
-                print(f"  ⚠ 未发现明显错误，跳过批注")
+            if not has_error and comment_type != 'global_comment':
+                print(f"  ⚠ 未发现明显错误并且非全局性批注，跳过批注")
             elif similarity_score < threshold:
                 print(f"  ⚠ 相似度 {similarity_score} 低于阈值 {threshold}")
             return None
@@ -409,105 +421,6 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
         print(f"  ❌ DeepSeek API调用或解析失败: {str(e)}")
         return None
 
-def deepseek_text_match(target_text, doc_texts, threshold=0.9):
-    """
-    用DeepSeek大模型为段落寻找最匹配的批注，并返回该批注应附着的具体文本。
-    target_text: docx文档中的段落文本
-    doc_texts: List[str]，Excel中的批注内容列表
-    threshold: 相似度阈值
-    返回: (应附着的文本, 匹配的批注, 相似度, 批注索引, 匹配原因) 或 None
-    """
-    print(f"\n=== DeepSeek文本匹配开始 ===")
-    print(f"批注内容: {doc_texts}")
-    print(f"段落文本: '{target_text[:70]}...'")
-    headers = {
-        'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
-        'Content-Type': 'application/json',
-    }
-    
-    candidate_comments = [f"{i+1}. {c}" for i, c in enumerate(doc_texts) if c.strip()]
-    if not candidate_comments:
-        print("  ⚠ 没有找到有效的候选批注")
-        return None
-    
-    system_prompt = """你是一个专业的文档批注匹配专家。你的任务是分析一个段落和一系列候选批注，找出最适合该段落的批注，并从段落中抽取出该批注应附着的原文。
-
-评估标准：
-1. 语义相关性：段落内容与批注在语义上是否高度相关。
-2. 精确性：批注是否针对段落中的特定短语或句子。
-
-请严格按照以下JSON格式返回结果，确保 `target_text_in_paragraph` 的内容是 `paragraph_text` 的子字符串：
-{
-    "best_match_index": 数字(候选批注的编号，从1开始),
-    "similarity_score": 数字(0.0-1.0之间的相似度分数),
-    "reasoning": "为什么这个批注最适合该段落？（如果文档原文为英文，原因请用中文回答）",
-    "target_text_in_paragraph": "从段落中抽出的、批注应附着的原文（必须是段落的子串）"
-}
-
-如果没有任何批注适合该段落，返回：
-{
-    "best_match_index": null,
-    "similarity_score": 0.0,
-    "reasoning": "未找到合适批注的原因",
-    "target_text_in_paragraph": null
-}"""
-
-    user_prompt = f""""paragraph_text":
-"{target_text}"
-
-"candidate_comments":
-{chr(10).join(candidate_comments)}
-
-请分析上述段落和批注，找出最匹配的组合，并按要求返回JSON。"""
-
-    data = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.1,
-        "max_tokens": 500,
-        "response_format": {"type": "json_object"}
-    }
-    
-    try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=60)
-        if response.status_code != 200:
-            print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
-            return None
-        
-        result = response.json()
-        content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-        
-        # print(f"✅ DeepSeek响应: {content}")
-        
-        import json
-        match_result = json.loads(content)
-        
-        best_index = match_result.get('best_match_index')
-        similarity_score = match_result.get('similarity_score', 0.0)
-        text_in_para = match_result.get('target_text_in_paragraph')
-        reasoning = match_result.get('reasoning', '')
-        
-        if best_index is not None and similarity_score >= threshold and text_in_para:
-            actual_index = best_index - 1
-            if 0 <= actual_index < len(doc_texts):
-                matched_comment = doc_texts[actual_index]
-                # 验证返回的文本是否在原文中
-                if text_in_para in target_text:
-                    return text_in_para, matched_comment, similarity_score, actual_index, reasoning
-                else:
-                    print(f"  ❌ 模型返回的文本 '{text_in_para}' 不在段落中。")
-                    return None
-            else:
-                return None
-        else:
-            return None
-            
-    except Exception as e:
-        print(f"  ❌ DeepSeek API调用或解析失败: {str(e)}")
-        return None
 
 # 清理和标准化文本
 def normalize_text(text):
@@ -1125,6 +1038,23 @@ def upload_file():
             except Exception as e:
                 print(f"警告: 清理Excel文件失败: {str(e)}")
             
+            # 清理临时和原始文件，只保留最终输出文件
+            for f in [word_path, excel_path, copied_word_path]:
+                if os.path.exists(f) and f != final_output_path:
+                    try:
+                        os.remove(f)
+                    except Exception as e:
+                        print(f"警告: 删除文件 {f} 失败: {e}")
+            # 清理 save-word 目录下的所有文件
+            if os.path.exists(app.config['SAVE_FOLDER']):
+                for f in os.listdir(app.config['SAVE_FOLDER']):
+                    file_path = os.path.join(app.config['SAVE_FOLDER'], f)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                    except Exception as e:
+                        print(f"警告: 删除中间文件 {file_path} 失败: {e}")
+            
             return jsonify({
                 'message': '文件处理成功',
                 'output_file': os.path.basename(final_output_path)
@@ -1248,6 +1178,9 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     current_id = 0
     comment_texts = [item['comment'].strip() for item in comments if item.get('comment', '').strip()]
     
+    # 跟踪已匹配的批注索引
+    matched_comment_indices = set()
+    
     for para_idx, para in enumerate(paragraphs):
         para_text = ''.join(t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text).strip()
         # 跳过标题段落（只在内容段落插入批注）
@@ -1269,17 +1202,24 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             if next_text:
                 context_text += f"同区块后文：{next_text}"
         # 匹配批注
-        match = deepseek_context_aware_match(para_text, comment_texts, context_text, threshold=0.9)
+        match = deepseek_context_aware_match(para_text, comment_texts, context_text, threshold=0.7)
         if not match:
             continue
-        text_to_find, original_comment, _, comment_idx, reasoning, context_analysis, error_type = match
+        text_to_find, original_comment, _, comment_idx, reasoning, context_analysis, error_type, comment_type = match
         comment_content = original_comment
         comment_id = str(current_id)
+        
+        # 记录已匹配的批注索引
+        matched_comment_indices.add(comment_idx)
+        
         print(f"  ✓ 段落 {para_idx} 匹配到批注: '{original_comment}'")
         print(f"    应附着于文本: '{text_to_find}'")
         print(f"    匹配原因: '{reasoning}'")
         print(f"    上下文分析: '{context_analysis}'")
         print(f"    错误类型: '{error_type}'")
+        print(f"    批注类型: '{comment_type}'")
+        if comment_type == 'global_comment':
+            print(f"    这是全局性批注，将在批注内容前添加【全局】标识")
         # 在该段落内进行精确的跨run文本定位
         runs = para.findall('.//w:r', namespaces={'w': w_ns})
         run_map = []
@@ -1345,6 +1285,9 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         p1 = etree.Element(W('p'))
         r1 = etree.Element(W('r'))
         t1 = etree.Element(W('t'))
+        # 如果是全局性批注，在前面加上【全局】标识
+        if comment_type == 'global_comment':
+            comment_content = "【全局】" + comment_content
         t1.text = clean_comment_text(comment_content)
         r1.append(t1)
         p1.append(r1)
@@ -1353,7 +1296,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         p2 = etree.Element(W('p'))
         r2 = etree.Element(W('r'))
         t2 = etree.Element(W('t'))
-        t2.text = clean_comment_text("匹配原因：" + reasoning)
+        t2.text = clean_comment_text("匹配原因：" + (reasoning or ""))
         r2.append(t2)
         p2.append(r2)
         comment_elem.append(p2)
@@ -1361,7 +1304,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         p3 = etree.Element(W('p'))
         r3 = etree.Element(W('r'))
         t3 = etree.Element(W('t'))
-        t3.text = clean_comment_text("上下文分析：" + context_analysis)
+        t3.text = clean_comment_text("上下文分析：" + (context_analysis or ""))
         r3.append(t3)
         p3.append(r3)
         comment_elem.append(p3)
@@ -1369,13 +1312,94 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         p4 = etree.Element(W('p'))
         r4 = etree.Element(W('r'))
         t4 = etree.Element(W('t'))
-        t4.text = clean_comment_text("错误类型：" + error_type)
+        t4.text = clean_comment_text("错误类型：" + (error_type or ""))
         r4.append(t4)
         p4.append(r4)
         comment_elem.append(p4)
+        # 第五行：批注类型
+        p5 = etree.Element(W('p'))
+        r5 = etree.Element(W('r'))
+        t5 = etree.Element(W('t'))
+        type_text = "全局性批注" if comment_type == 'global_comment' else "具体错误批注"
+        t5.text = clean_comment_text("批注类型：" + type_text)
+        r5.append(t5)
+        p5.append(r5)
+        comment_elem.append(p5)
         comments_root.append(comment_elem)
         print(f"    ✓ 成功插入批注。")
         current_id += 1
+    
+    # 处理未匹配的批注：合并为一个批注（每条回车分隔）
+    print(f"\n=== 处理未匹配的批注 ===")
+    unmatched_comments = []
+    for i, comment in enumerate(comments):
+        if i not in matched_comment_indices and comment.get('comment', '').strip():
+            unmatched_comments.append((i, comment))
+    
+    if unmatched_comments:
+        print(f"找到 {len(unmatched_comments)} 个未匹配的批注，合并为一个批注插入")
+        # 找到文档的body元素
+        body = doc_root.find('.//w:body', namespaces={'w': w_ns})
+        if body is None:
+            print("警告：未找到文档body元素")
+        else:
+            # 插入一个可见文本作为所有未匹配批注的锚点
+            anchor_para = etree.Element(W('p'))
+            comment_id = str(current_id)
+            comment_start_node = etree.Element(W('commentRangeStart'))
+            comment_start_node.set(W('id'), comment_id)
+            anchor_para.append(comment_start_node)
+            run = etree.Element(W('r'))
+            t = etree.Element(W('t'))
+            t.text = "【未匹配成功批注】"
+            run.append(t)
+            anchor_para.append(run)
+            comment_end_node = etree.Element(W('commentRangeEnd'))
+            comment_end_node.set(W('id'), comment_id)
+            anchor_para.append(comment_end_node)
+            comment_ref_run = etree.Element(W('r'))
+            comment_ref_node = etree.Element(W('commentReference'))
+            comment_ref_node.set(W('id'), comment_id)
+            comment_ref_run.append(comment_ref_node)
+            anchor_para.append(comment_ref_run)
+            body.append(anchor_para)
+            # 合并所有未匹配内容为一个批注
+            comment_elem = etree.Element(W('comment'))
+            comment_elem.set(W('id'), comment_id)
+            comment_elem.set(W('author'), '批注系统')
+            comment_elem.set(W('date'), datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
+            for comment_idx, comment_data in unmatched_comments:
+                comment_content = comment_data['comment'].strip()
+                comment_text = comment_data.get('text', '').strip()
+                # 每条为一个段落
+                p = etree.Element(W('p'))
+                r = etree.Element(W('r'))
+                t = etree.Element(W('t'))
+                t.text = clean_comment_text(f"【未匹配成功】{comment_content}")
+                r.append(t)
+                p.append(r)
+                comment_elem.append(p)
+                # 原始序号
+                if comment_text:
+                    p2 = etree.Element(W('p'))
+                    r2 = etree.Element(W('r'))
+                    t2 = etree.Element(W('t'))
+                    t2.text = clean_comment_text("原始序号：" + comment_text)
+                    r2.append(t2)
+                    p2.append(r2)
+                    comment_elem.append(p2)
+                # 状态说明
+                p3 = etree.Element(W('p'))
+                r3 = etree.Element(W('r'))
+                t3 = etree.Element(W('t'))
+                t3.text = clean_comment_text("状态：未找到匹配的文档内容，作为独立批注添加")
+                r3.append(t3)
+                p3.append(r3)
+                comment_elem.append(p3)
+            comments_root.append(comment_elem)
+            current_id += 1
+    else:
+        print("✓ 所有批注都已成功匹配")
     
     # 保存XML
     doc_tree.write(doc_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
