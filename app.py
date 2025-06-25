@@ -301,13 +301,15 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     system_prompt = """你是一个专业的文档批注匹配专家。你的任务是分析一个段落和一系列候选批注，找出最适合该段落的批注。
 
 重要规则：
-1. 精确错误识别：只要发现明显的错误，无论文本多短都要插入批注
-2. 错误类型包括但不限于：日期错误、数字错误、名称错误、格式错误等
-3. 上下文分析：考虑同一标题下的前后段落，帮助判断是否真的存在错误
-4. 语义相关性：段落内容与批注在语义上是否高度相关
-5. 精确性：批注是否针对段落中的特定错误内容
-6. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本
-7. 全局性批注：如果批注是对整个文档的宏观评价或建议，标记为global_comment类型
+1. 精确错误识别：只要发现明显的错误，无论文本多短都要插入批注。
+2. 错误类型包括但不限于：日期错误、数字错误、名称错误、格式错误等。
+3. 上下文分析：考虑同一标题下的前后段落，帮助判断是否真的存在错误。
+4. 语义相关性：段落内容与批注在语义上是否高度相关。
+5. 精确性：批注是否针对段落中的特定错误内容，并且批注不要绑定到标题上，批注只与正文相绑定。
+6. 仿真性检查：仅对具体错误批注(specific_error)进行逻辑一致性分析。若原文逻辑是正确的与批注内容相符合的，就不要进行批注。例如：批注内容：验收日期定为3日，不可更改。原文内容：验收期为4月3日。这里原文与批注都是3日，逻辑相符合，不要进行批注。全局性批注(global_comment)不进行逻辑一致性分析。
+7. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本。
+8. 全局性批注：如果批注是对整个文档的宏观评价或建议，标记为global_comment类型，找到最适合的段落位置插入。
+9. 标题过滤：如果当前段落是标题（包含数字编号、章节标识等），则不进行批注匹配。
 
 请严格按照以下JSON格式返回结果：
 {
@@ -318,7 +320,9 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "has_error": true/false(是否发现明显错误),
     "error_type": "错误类型（如：日期错误、数字错误、名称错误等）",
     "context_analysis": "对同一标题下上下文的分析",
-    "comment_type": "批注类型：specific_error(具体错误) 或 global_comment(全局性批注)"
+    "comment_type": "批注类型：specific_error(具体错误) 或 global_comment(全局性批注)",
+    "is_title": true/false(当前段落是否为标题),
+    "logic_consistent": true/false(仅对specific_error有效，原文与批注逻辑是否一致)
 }
 
 如果没有任何批注适合该段落，返回：
@@ -330,7 +334,9 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "has_error": false,
     "error_type": null,
     "context_analysis": "上下文分析",
-    "comment_type": "none"
+    "comment_type": "none",
+    "is_title": false,
+    "logic_consistent": true
 }"""
 
     user_prompt = f"""当前段落文本：
@@ -344,8 +350,12 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 
 请分析上述段落、上下文和批注，找出最匹配的组合，并按要求返回JSON。特别注意：
 1. 识别明显的错误，无论文本长度如何。
-2. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本
-3. 如果批注是对整个文档的宏观评价或建议，标记为global_comment类型"""
+2. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本。
+3. 如果批注是对整个文档的宏观评价或建议，标记为global_comment类型。
+4. 仿真性检查：仅对具体错误批注(specific_error)进行逻辑一致性分析。如果原文内容与批注要求逻辑一致，则不进行批注。例如：批注说"验收日期定为3日"，原文说"验收期为4月3日"，两者都是3日，逻辑一致，不批注。全局性批注不进行逻辑一致性分析。
+5. 标题过滤：如果当前段落是标题（包含数字编号、章节标识等），则不进行批注匹配。
+6. 批注只与正文绑定，不与标题绑定。
+7. 全局性批注：找到最适合的段落位置插入，不进行逻辑一致性分析。"""
 
     data = {
         "model": "deepseek-chat",
@@ -378,6 +388,8 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
         error_type = match_result.get('error_type', '')
         context_analysis = match_result.get('context_analysis', '')
         comment_type = match_result.get('comment_type', 'specific_error')
+        is_title = match_result.get('is_title', False)
+        logic_consistent = match_result.get('logic_consistent', True)
         
         print(f"  AI分析结果:")
         print(f"    匹配索引: {best_index}")
@@ -386,11 +398,15 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
         print(f"    错误类型: {error_type}")
         print(f"    批注类型: {comment_type}")
         print(f"    上下文分析: {context_analysis}")
+        print(f"    是否为标题: {is_title}")
+        print(f"    原文与批注逻辑是否一致: {logic_consistent}")
         
         # 处理全局性批注和具体错误批注
         if (best_index is not None and 
             similarity_score >= threshold and 
-            (has_error or comment_type == 'global_comment')):
+            (has_error or comment_type == 'global_comment') and
+            not is_title and
+            (comment_type == 'global_comment' or not logic_consistent)):
             
             actual_index = best_index - 1
             if 0 <= actual_index < len(doc_texts):
@@ -404,14 +420,18 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
                 
                 # 验证文本是否在段落中
                 if text_in_para and text_in_para in target_text:
-                    return text_in_para, matched_comment, similarity_score, actual_index, reasoning, context_analysis, error_type, comment_type
+                    return text_in_para, matched_comment, similarity_score, actual_index, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent
                 else:
                     print(f"  ❌ 模型返回的文本 '{text_in_para}' 不在段落中。")
                     return None
             else:
                 return None
         else:
-            if not has_error and comment_type != 'global_comment':
+            if is_title:
+                print(f"  ⚠ 当前段落是标题，跳过批注")
+            elif comment_type == 'specific_error' and logic_consistent:
+                print(f"  ⚠ 具体错误批注：原文与批注逻辑一致，跳过批注")
+            elif not has_error and comment_type != 'global_comment':
                 print(f"  ⚠ 未发现明显错误并且非全局性批注，跳过批注")
             elif similarity_score < threshold:
                 print(f"  ⚠ 相似度 {similarity_score} 低于阈值 {threshold}")
@@ -1205,7 +1225,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         match = deepseek_context_aware_match(para_text, comment_texts, context_text, threshold=0.7)
         if not match:
             continue
-        text_to_find, original_comment, _, comment_idx, reasoning, context_analysis, error_type, comment_type = match
+        text_to_find, original_comment, _, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent = match
         comment_content = original_comment
         comment_id = str(current_id)
         
@@ -1218,8 +1238,17 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         print(f"    上下文分析: '{context_analysis}'")
         print(f"    错误类型: '{error_type}'")
         print(f"    批注类型: '{comment_type}'")
+        print(f"    是否为标题: {is_title}")
+        if comment_type == 'specific_error':
+            print(f"    原文与批注逻辑是否一致: {logic_consistent}")
+        else:
+            print(f"    原文与批注逻辑是否一致: 全局性批注不进行逻辑分析")
         if comment_type == 'global_comment':
-            print(f"    这是全局性批注，将在批注内容前添加【全局】标识")
+            print(f"    📝 这是全局性批注，将在批注内容前添加【全局】标识")
+        if is_title:
+            print(f"    ⚠ 当前段落是标题，将跳过批注")
+        if comment_type == 'specific_error' and logic_consistent:
+            print(f"    ⚠ 具体错误批注：原文与批注逻辑一致，将跳过批注")
         # 在该段落内进行精确的跨run文本定位
         runs = para.findall('.//w:r', namespaces={'w': w_ns})
         run_map = []
@@ -1325,6 +1354,22 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         r5.append(t5)
         p5.append(r5)
         comment_elem.append(p5)
+        # 第六行：是否为标题
+        p6 = etree.Element(W('p'))
+        r6 = etree.Element(W('r'))
+        t6 = etree.Element(W('t'))
+        t6.text = clean_comment_text("是否为标题：" + str(is_title))
+        r6.append(t6)
+        p6.append(r6)
+        comment_elem.append(p6)
+        # 第七行：原文与批注逻辑是否一致
+        p7 = etree.Element(W('p'))
+        r7 = etree.Element(W('r'))
+        t7 = etree.Element(W('t'))
+        t7.text = clean_comment_text("原文与批注逻辑是否一致：" + str(logic_consistent))
+        r7.append(t7)
+        p7.append(r7)
+        comment_elem.append(p7)
         comments_root.append(comment_elem)
         print(f"    ✓ 成功插入批注。")
         current_id += 1

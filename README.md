@@ -32,7 +32,7 @@ pip install -r requirements.txt
 3. 下载带AI批注的Word文档。
 
 ### Excel批注表格式
-- 第一列：需检查的原文或关键词
+- 第一列：序号
 - 第二列：批注内容
 
 ## 目录结构
