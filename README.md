@@ -21,7 +21,7 @@ pip install -r requirements.txt
 **注意：**
 - `.doc`格式转换依赖本地安装 [LibreOffice](https://www.libreoffice.org/)。
 - Windows下需保证 `C:\Program Files\LibreOffice\program\soffice.exe` 路径存在。
-- 需要将app.py中的第26行改为自己的DeepSeek-API-KEY。
+- 若是api-key无法使用或者已经过期则需要将app.py中的第26行改为自己的DeepSeek-API-KEY。
 
 ## 使用方法
 1. 启动服务：
