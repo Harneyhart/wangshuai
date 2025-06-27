@@ -606,7 +606,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 7. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本。
 8. 全局性批注：如果批注是对整个文档的宏观评价或建议，标记为global_comment类型，找到最适合的段落位置插入。
 9. 标题过滤：如果当前段落是标题（包含数字编号、章节标识等），则不进行批注匹配。
-10.模糊匹配：即使没有精确匹配，也要计算所有批注的相似度分数，用于后续模糊匹配，并且也要写出匹配的原因，为什么模糊为什么又能匹配。对于模糊匹配，需要详细分析语义相似性、内容相关性、关键词匹配度等因素，说明为什么这个批注最适合当前段落。
+10.模糊匹配：即使没有精确匹配，也要计算所有批注的相似度分数，用于后续模糊匹配，并且需要写出模糊为什么又能匹配，不要只写置信度，要将匹配上的原因写上。
 
 请严格按照以下JSON格式返回结果：
 {
@@ -656,7 +656,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 6. 批注只与正文绑定，不与标题绑定。
 7. 全局性批注：找到最适合的段落位置插入，不进行逻辑一致性分析。
 8. 无论是否有精确匹配，都要计算所有批注的相似度分数，填入all_similarity_scores字段。
-9. 对于模糊匹配的情况，在reasoning字段中详细说明为什么选择这个批注，包括语义相似性、内容相关性、关键词匹配等方面的分析。"""
+9. 对于模糊匹配的情况，在reasoning字段中详细说明为什么选择这个批注，并且需要写出模糊为什么又能匹配，不要只写置信度，要将匹配上的原因写上。"""
 
     data = {
         "model": "deepseek-chat",
@@ -1767,7 +1767,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     if CONCURRENT_CONFIG['enabled']:
         estimated_serial_time = total_processed * avg_time_per_para
         speedup = estimated_serial_time / processing_time if processing_time > 0 else 1
-        print(f"  预估串行耗时: {estimated_serial_time:.2f} 秒")
+        # print(f"  预估串行耗时: {estimated_serial_time:.2f} 秒")
         # print(f"  加速比: {speedup:.2f}x")
         
         # 性能分析和建议
