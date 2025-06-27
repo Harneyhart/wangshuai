@@ -16,6 +16,12 @@ import uuid
 import datetime
 import requests
 import numpy as np
+# 并发处理模块
+import concurrent.futures
+import threading
+from queue import Queue
+import time
+
 
 app = Flask(__name__)
 app.secret_key = 'replace-with-your-own-secret'
@@ -25,6 +31,55 @@ def W(tag): return f"{{{W_NS}}}{tag}"
 
 DEEPSEEK_API_KEY = 'sk-44707dc99db4416c9d21260fb0d9f6bc'
 DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions'
+
+# 并发处理参数置
+
+CONCURRENT_CONFIG = {
+    'enabled': True,           # 是否启用并发处理
+    'batch_size': 5,           # 每批处理的段落数量（从3增加到5）
+    'max_workers': 5,          # 最大并发线程数（从3增加到5）
+    'threshold': 0.5           # 相似度阈值
+}
+
+# 动态调整并发参数
+def adjust_concurrent_config(total_paragraphs, total_comments):
+    """
+    根据文档大小动态调整并发参数
+    """
+    print(f"\n=== 动态调整并发参数 ===")
+    print(f"文档段落数: {total_paragraphs}")
+    print(f"批注数量: {total_comments}")
+    
+    # 根据文档大小调整批次大小
+    if total_paragraphs <= 10:
+        CONCURRENT_CONFIG['batch_size'] = 3
+        CONCURRENT_CONFIG['max_workers'] = 4
+        print(f"  小文档：批次大小调整为 {CONCURRENT_CONFIG['batch_size']}，并发数调整为 {CONCURRENT_CONFIG['max_workers']}")
+    elif total_paragraphs <= 30:
+        CONCURRENT_CONFIG['batch_size'] = 5
+        CONCURRENT_CONFIG['max_workers'] = 6
+        print(f"  中等文档：批次大小调整为 {CONCURRENT_CONFIG['batch_size']}，并发数调整为 {CONCURRENT_CONFIG['max_workers']}")
+    elif total_paragraphs <= 100:
+        CONCURRENT_CONFIG['batch_size'] = 8
+        CONCURRENT_CONFIG['max_workers'] = 8
+        print(f"  大文档：批次大小调整为 {CONCURRENT_CONFIG['batch_size']}，并发数调整为 {CONCURRENT_CONFIG['max_workers']}")
+    else:
+        CONCURRENT_CONFIG['batch_size'] = 10
+        CONCURRENT_CONFIG['max_workers'] = 10
+        print(f"  超大文档：批次大小调整为 {CONCURRENT_CONFIG['batch_size']}，并发数调整为 {CONCURRENT_CONFIG['max_workers']}")
+    
+    # 根据批注数量调整阈值
+    if total_comments <= 5:
+        CONCURRENT_CONFIG['threshold'] = 0.3
+        print(f"  少量批注：阈值调整为 {CONCURRENT_CONFIG['threshold']}")
+    elif total_comments <= 20:  
+        CONCURRENT_CONFIG['threshold'] = 0.5
+        print(f"  中等批注：阈值调整为 {CONCURRENT_CONFIG['threshold']}")
+    else:
+        CONCURRENT_CONFIG['threshold'] = 0.6
+        print(f"  大量批注：阈值调整为 {CONCURRENT_CONFIG['threshold']}")
+    
+    print(f"✓ 并发参数调整完成")
 
 def extract_question_numbers_and_classify(text):
     """
@@ -122,7 +177,7 @@ def classify_questions_with_ai(question_numbers, full_text):
     }
     
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=60)
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)  # 减少超时时间从60秒到30秒
         if response.status_code != 200:
             print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
             return question_numbers, []
@@ -275,7 +330,248 @@ def add_title_comments_to_docx(docx_path, categories, output_path):
     shutil.rmtree(temp_dir)
     print(f"✓ 分类标题批注已添加到: {output_path}")
 
-def deepseek_context_aware_match(target_text, doc_texts, context_text="", threshold=0.7):
+# 并发批注匹配处理
+def process_paragraph_batch(paragraph_batch, comment_texts, threshold=0.5, max_workers=3):
+    """
+    并发处理一批段落，同时处理多个段落的批注匹配
+    paragraph_batch: 段落批次，每个元素包含 (para_idx, para, para_text, context_text)
+    comment_texts: 批注内容列表
+    threshold: 相似度阈值
+    max_workers: 最大并发数
+    """
+    print(f"\n=== 开始并发处理 {len(paragraph_batch)} 个段落，最大并发数: {max_workers} ===")
+    
+    results = []
+    
+    def process_single_paragraph(para_data):
+        para_idx, para, para_text, context_text = para_data
+        try:
+            # 调用原有的匹配函数
+            match = deepseek_context_aware_match(para_text, comment_texts, context_text, threshold)
+            if match:
+                text_to_find, original_comment, similarity_score, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent = match
+                return {
+                    'para_idx': para_idx,
+                    'para': para,
+                    'para_text': para_text,
+                    'match': match,
+                    'success': True
+                }
+            else:
+                return {
+                    'para_idx': para_idx,
+                    'para': para,
+                    'para_text': para_text,
+                    'match': None,
+                    'success': False
+                }
+        except Exception as e:
+            # 使用更安全的错误处理
+            error_msg = f"处理段落 {para_idx} 时出错: {str(e)}"
+            try:
+                print(f"  ❌ {error_msg}")
+            except:
+                pass  # 避免在程序关闭时打印错误
+            return {
+                'para_idx': para_idx,
+                'para': para,
+                'para_text': para_text,
+                'match': None,
+                'success': False,
+                'error': str(e)
+            }
+    
+    # 使用线程池执行并发处理，设置线程为非守护线程
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers,
+        thread_name_prefix="CommentMatch"
+    )
+    
+    try:
+        # 提交所有任务
+        future_to_para = {executor.submit(process_single_paragraph, para_data): para_data for para_data in paragraph_batch}
+        
+        # 收集结果
+        for future in concurrent.futures.as_completed(future_to_para):
+            para_data = future_to_para[future]
+            try:
+                result = future.result(timeout=60)  # 添加超时
+                results.append(result)
+                
+                if result['success']:
+                    para_idx = result['para_idx']
+                    text_to_find, original_comment, similarity_score, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent = result['match']
+                    try:
+                        print(f"  ✓ 并发处理段落 {para_idx} 匹配成功: '{original_comment[:50]}...' (相似度: {similarity_score:.3f})")
+                    except:
+                        pass  # 避免在程序关闭时打印错误
+                else:
+                    para_idx = result['para_idx']
+                    try:
+                        print(f"  ⚠ 并发处理段落 {para_idx} 未匹配到批注")
+                    except:
+                        pass
+                    
+            except concurrent.futures.TimeoutError:
+                para_idx = para_data[0]
+                try:
+                    print(f"  ❌ 并发处理段落 {para_idx} 超时")
+                except:
+                    pass
+                results.append({
+                    'para_idx': para_idx,
+                    'para': para_data[1],
+                    'para_text': para_data[2],
+                    'match': None,
+                    'success': False,
+                    'error': '处理超时'
+                })
+            except Exception as e:
+                para_idx = para_data[0]
+                try:
+                    print(f"  ❌ 并发处理段落 {para_idx} 时发生异常: {str(e)}")
+                except:
+                    pass
+                results.append({
+                    'para_idx': para_idx,
+                    'para': para_data[1],
+                    'para_text': para_data[2],
+                    'match': None,
+                    'success': False,
+                    'error': str(e)
+                })
+    
+    finally:
+        # 确保线程池正确关闭
+        executor.shutdown(wait=True)
+    
+    # 按原始段落索引排序结果
+    results.sort(key=lambda x: x['para_idx'])
+    
+    try:
+        print(f"✓ 并发处理完成，成功处理 {len([r for r in results if r['success']])} 个段落")
+    except:
+        pass  # 避免在程序关闭时打印错误
+    
+    return results
+
+def create_paragraph_batches(paragraphs, para_to_block_idx, comment_texts, batch_size=3):
+    """
+    将段落分批，为并发处理做准备
+    """
+    print(f"\n=== 创建段落批次，批次大小: {batch_size} ===")
+    
+    batches = []
+    current_batch = []
+    
+    for para_idx, para in enumerate(paragraphs):
+        para_text = ''.join(t.text for t in para.findall('.//w:t', namespaces={'w': W_NS}) if t.text).strip()
+        
+        # 跳过标题段落（只在内容段落插入批注）
+        if para_idx not in para_to_block_idx or not para_text or not comment_texts:
+            continue
+            
+        # 构建同区块下的上下文
+        block = para_to_block_idx[para_idx]
+        content_indices = block['content_indices']
+        idx_in_block = content_indices.index(para_idx)
+        context_text = ""
+        
+        if idx_in_block > 0:
+            prev_idx = content_indices[idx_in_block - 1]
+            prev_text = ''.join(t.text for t in paragraphs[prev_idx].findall('.//w:t', namespaces={'w': W_NS}) if t.text).strip()
+            if prev_text:
+                context_text += f"同区块前文：{prev_text}\n"
+        if idx_in_block < len(content_indices) - 1:
+            next_idx = content_indices[idx_in_block + 1]
+            next_text = ''.join(t.text for t in paragraphs[next_idx].findall('.//w:t', namespaces={'w': W_NS}) if t.text).strip()
+            if next_text:
+                context_text += f"同区块后文：{next_text}"
+        
+        # 添加到当前批次
+        current_batch.append((para_idx, para, para_text, context_text))
+        
+        # 如果批次满了，保存并开始新批次
+        if len(current_batch) >= batch_size:
+            batches.append(current_batch)
+            current_batch = []
+    
+    # 添加最后一个不完整的批次
+    if current_batch:
+        batches.append(current_batch)
+    
+    print(f"✓ 创建了 {len(batches)} 个批次，总共 {sum(len(batch) for batch in batches)} 个段落")
+    return batches
+
+def generate_fuzzy_match_reasoning(target_text, matched_comment, similarity_score, all_scores, best_index):
+    """
+    生成详细的模糊匹配原因
+    target_text: 当前段落文本
+    matched_comment: 匹配到的批注内容
+    similarity_score: 相似度分数
+    all_scores: 所有批注的相似度分数
+    best_index: 最佳匹配的批注索引
+    """
+    try:
+        # 分析相似度分布
+        sorted_scores = sorted(all_scores, reverse=True)
+        second_best_score = sorted_scores[1] if len(sorted_scores) > 1 else 0
+        score_gap = similarity_score - second_best_score
+        
+        # 分析文本相似性
+        target_words = set(target_text.lower().split())
+        comment_words = set(matched_comment.lower().split())
+        common_words = target_words.intersection(comment_words)
+        word_overlap_ratio = len(common_words) / max(len(target_words), len(comment_words)) if max(len(target_words), len(comment_words)) > 0 else 0
+        
+        # 生成详细原因
+        reasoning_parts = []
+        reasoning_parts.append(f"模糊匹配成功，相似度: {similarity_score:.3f}")
+        
+        # 相似度分析
+        if similarity_score >= 0.7:
+            reasoning_parts.append("相似度较高，存在较强的语义关联")
+        elif similarity_score >= 0.5:
+            reasoning_parts.append("相似度中等，存在一定的语义关联")
+        elif similarity_score >= 0.3:
+            reasoning_parts.append("相似度较低，但仍有部分语义关联")
+        else:
+            reasoning_parts.append("相似度很低，但为最佳匹配选项")
+        
+        # 竞争分析
+        if score_gap > 0.1:
+            reasoning_parts.append(f"与其他批注相比优势明显（差距: {score_gap:.3f}）")
+        elif score_gap > 0.05:
+            reasoning_parts.append(f"与其他批注相比略有优势（差距: {score_gap:.3f}）")
+        else:
+            reasoning_parts.append("与其他批注相似度接近，选择最高分项")
+        
+        # 词汇重叠分析
+        if word_overlap_ratio > 0.3:
+            reasoning_parts.append(f"词汇重叠率较高（{word_overlap_ratio:.1%}），存在共同关键词")
+        elif word_overlap_ratio > 0.1:
+            reasoning_parts.append(f"词汇重叠率中等（{word_overlap_ratio:.1%}），部分关键词匹配")
+        else:
+            reasoning_parts.append(f"词汇重叠率较低（{word_overlap_ratio:.1%}），主要基于语义相似性")
+        
+        # 内容相关性分析
+        if "错误" in matched_comment.lower() or "问题" in matched_comment.lower():
+            reasoning_parts.append("批注涉及错误或问题识别，与文档审查相关")
+        if "建议" in matched_comment.lower() or "修改" in matched_comment.lower():
+            reasoning_parts.append("批注包含建议或修改意见，具有指导意义")
+        if "条款" in matched_comment.lower() or "规定" in matched_comment.lower():
+            reasoning_parts.append("批注涉及条款或规定，与合同内容相关")
+        
+        # 总结
+        reasoning_parts.append("虽然未达到精确匹配标准，但基于语义相似性和内容相关性，该批注最适合当前段落")
+        
+        return "；".join(reasoning_parts)
+        
+    except Exception as e:
+        # 如果分析失败，返回基本原因
+        return f"模糊匹配，相似度: {similarity_score:.3f}，基于AI语义分析结果"
+
+def deepseek_context_aware_match(target_text, doc_texts, context_text="", threshold=0.5):
     """
     上下文感知的DeepSeek批注匹配，优先考虑上下文
     target_text: 当前段落文本
@@ -286,7 +582,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     print(f"\n=== DeepSeek上下文感知匹配开始 ===")
     print(f"当前段落: '{target_text}'")
     print(f"上下文: '{context_text}'")
-    print(f"批注数量: {len(doc_texts)}")
+    # print(f"批注数量: {len(doc_texts)}")
     
     headers = {
         'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
@@ -310,6 +606,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 7. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本。
 8. 全局性批注：如果批注是对整个文档的宏观评价或建议，标记为global_comment类型，找到最适合的段落位置插入。
 9. 标题过滤：如果当前段落是标题（包含数字编号、章节标识等），则不进行批注匹配。
+10.模糊匹配：即使没有精确匹配，也要计算所有批注的相似度分数，用于后续模糊匹配，并且也要写出匹配的原因，为什么模糊为什么又能匹配。对于模糊匹配，需要详细分析语义相似性、内容相关性、关键词匹配度等因素，说明为什么这个批注最适合当前段落。
 
 请严格按照以下JSON格式返回结果：
 {
@@ -322,7 +619,8 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "context_analysis": "对同一标题下上下文的分析",
     "comment_type": "批注类型：specific_error(具体错误) 或 global_comment(全局性批注)",
     "is_title": true/false(当前段落是否为标题),
-    "logic_consistent": true/false(仅对specific_error有效，原文与批注逻辑是否一致)
+    "logic_consistent": true/false(仅对specific_error有效，原文与批注逻辑是否一致),
+    "all_similarity_scores": [所有批注的相似度分数列表，按批注顺序排列]
 }
 
 如果没有任何批注适合该段落，返回：
@@ -336,7 +634,8 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "context_analysis": "上下文分析",
     "comment_type": "none",
     "is_title": false,
-    "logic_consistent": true
+    "logic_consistent": true,
+    "all_similarity_scores": [所有批注的相似度分数列表，按批注顺序排列]
 }"""
 
     user_prompt = f"""当前段落文本：
@@ -355,7 +654,9 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 4. 仿真性检查：仅对具体错误批注(specific_error)进行逻辑一致性分析。如果原文内容与批注要求逻辑一致，则不进行批注。例如：批注说"验收日期定为3日"，原文说"验收期为4月3日"，两者都是3日，逻辑一致，不批注。全局性批注不进行逻辑一致性分析。
 5. 标题过滤：如果当前段落是标题（包含数字编号、章节标识等），则不进行批注匹配。
 6. 批注只与正文绑定，不与标题绑定。
-7. 全局性批注：找到最适合的段落位置插入，不进行逻辑一致性分析。"""
+7. 全局性批注：找到最适合的段落位置插入，不进行逻辑一致性分析。
+8. 无论是否有精确匹配，都要计算所有批注的相似度分数，填入all_similarity_scores字段。
+9. 对于模糊匹配的情况，在reasoning字段中详细说明为什么选择这个批注，包括语义相似性、内容相关性、关键词匹配等方面的分析。"""
 
     data = {
         "model": "deepseek-chat",
@@ -369,7 +670,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     }
     
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=60)
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)  # 减少超时时间从60秒到30秒
         if response.status_code != 200:
             print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
             return None
@@ -390,16 +691,18 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
         comment_type = match_result.get('comment_type', 'specific_error')
         is_title = match_result.get('is_title', False)
         logic_consistent = match_result.get('logic_consistent', True)
+        all_similarity_scores = match_result.get('all_similarity_scores', [])
         
         print(f"  AI分析结果:")
-        print(f"    匹配索引: {best_index}")
+        # 显示当前批注内容（如果有匹配的话）
+        if best_index is not None and 0 <= best_index - 1 < len(doc_texts):
+            current_comment = doc_texts[best_index - 1]
+            print(f"    当前批注内容: {current_comment}")
+        else:
+            print(f"    当前批注内容: 无匹配")
+        print(f"    当前原文内容: {target_text}")
         print(f"    相似度: {similarity_score}")
-        print(f"    发现错误: {has_error}")
-        print(f"    错误类型: {error_type}")
-        print(f"    批注类型: {comment_type}")
-        print(f"    上下文分析: {context_analysis}")
-        print(f"    是否为标题: {is_title}")
-        print(f"    原文与批注逻辑是否一致: {logic_consistent}")
+        print(f"    所有批注相似度: {all_similarity_scores}")
         
         # 处理全局性批注和具体错误批注
         if (best_index is not None and 
@@ -427,6 +730,38 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
             else:
                 return None
         else:
+            # ===== 新增代码：模糊匹配逻辑 =====
+            print(f"  ⚠ 精确匹配失败，开始模糊匹配...")
+            
+            # 检查是否有相似度分数
+            if all_similarity_scores and len(all_similarity_scores) == len(doc_texts):
+                # 找到相似度最高的批注
+                max_similarity = max(all_similarity_scores)
+                max_similarity_index = all_similarity_scores.index(max_similarity)
+                
+                print(f"    最高相似度: {max_similarity:.3f} (批注 {max_similarity_index + 1})")
+                
+                # 如果最高相似度 >= 0.2，进行模糊匹配
+                if max_similarity >= 0.2:
+                    print(f"    ✓ 模糊匹配成功，相似度: {max_similarity:.3f}")
+                    matched_comment = doc_texts[max_similarity_index]
+                    print(f"    当前批注内容: {matched_comment}")
+                    
+                    # 使用段落开头作为锚点
+                    text_in_para = target_text[:50] if len(target_text) > 50 else target_text
+                    
+                    # 生成详细的模糊匹配原因
+                    fuzzy_reasoning = generate_fuzzy_match_reasoning(target_text, matched_comment, max_similarity, all_similarity_scores, max_similarity_index)
+                    
+                    # 返回模糊匹配结果，在批注前添加【模糊】标记
+                    return text_in_para, matched_comment, max_similarity, max_similarity_index, fuzzy_reasoning, context_analysis, "模糊匹配", "fuzzy_match", is_title, True
+                
+                else:
+                    print(f"    ❌ 最高相似度 {max_similarity:.3f} 低于模糊匹配阈值 0.2")
+            else:
+                print(f"    ❌ 无法获取相似度分数进行模糊匹配")
+            # ===== 新增代码结束 =====
+            
             if is_title:
                 print(f"  ⚠ 当前段落是标题，跳过批注")
             elif comment_type == 'specific_error' and logic_consistent:
@@ -496,9 +831,9 @@ def convert_doc_to_docx_alternative(doc_path):
                     
                     # 解析HTML
                     soup = BeautifulSoup(html_content, 'html.parser')
-                    
                     # 创建新的docx文档
                     doc = Document()
+                    
                     
                     # 处理段落
                     for p_tag in soup.find_all(['p', 'div']):
@@ -1041,6 +1376,19 @@ def upload_file():
             final_output_path = output_path
             print(f"✓ 最终输出文件: {final_output_path}")
             
+            # 自动打开处理完成的文件
+            try:
+                print(f"\n=== 自动打开处理完成的文件 ===")
+                # 使用系统默认程序打开文件
+                if os.name == 'nt':  # Windows
+                    os.startfile(final_output_path)
+                elif os.name == 'posix':  # macOS 和 Linux
+                    subprocess.run(['open', final_output_path], check=True)
+                print(f"✓ 已自动打开文件: {final_output_path}")
+            except Exception as e:
+                print(f"⚠️ 自动打开文件失败: {str(e)}")
+                print(f"请手动打开文件: {final_output_path}")
+            
             # 清理临时文件
             try:
                 if os.path.exists(copied_word_path) and copied_word_path != output_path:
@@ -1076,7 +1424,7 @@ def upload_file():
                         print(f"警告: 删除中间文件 {file_path} 失败: {e}")
             
             return jsonify({
-                'message': '文件处理成功',
+                'message': f'文件处理成功',
                 'output_file': os.path.basename(final_output_path)
             })
             
@@ -1201,31 +1549,81 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     # 跟踪已匹配的批注索引
     matched_comment_indices = set()
     
-    for para_idx, para in enumerate(paragraphs):
-        para_text = ''.join(t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text).strip()
-        # 跳过标题段落（只在内容段落插入批注）
-        if para_idx not in para_to_block_idx or not para_text or not comment_texts:
+    # 发处理段落批注匹配
+    print(f"\n=== 开始并发批注处理 ===")
+    start_time = time.time()
+    
+    # 动态调整并发参数
+    total_paragraphs = len([p for p in paragraphs if p.findall('.//w:t', namespaces={'w': w_ns})])
+    total_comments = len(comment_texts)
+    adjust_concurrent_config(total_paragraphs, total_comments)
+    
+    # 检查是否启用并发处理
+    if CONCURRENT_CONFIG['enabled']:
+        print(f"✓ 启用并发处理模式")
+        print(f"  批次大小: {CONCURRENT_CONFIG['batch_size']}")
+        print(f"  最大并发数: {CONCURRENT_CONFIG['max_workers']}")
+        print(f"  相似度阈值: {CONCURRENT_CONFIG['threshold']}")
+        
+        # 创建段落批次
+        paragraph_batches = create_paragraph_batches(paragraphs, para_to_block_idx, comment_texts, batch_size=CONCURRENT_CONFIG['batch_size'])
+        
+        # 并发处理所有批次
+        all_results = []
+        for batch_idx, batch in enumerate(paragraph_batches):
+            print(f"\n--- 处理批次 {batch_idx + 1}/{len(paragraph_batches)} ---")
+            batch_results = process_paragraph_batch(batch, comment_texts, threshold=CONCURRENT_CONFIG['threshold'], max_workers=CONCURRENT_CONFIG['max_workers'])
+            all_results.extend(batch_results)
+    else:
+        print(f"⚠ 使用串行处理模式")
+        # 串行处理（保持原有逻辑作为备用）
+        all_results = []
+        for para_idx, para in enumerate(paragraphs):
+            para_text = ''.join(t.text for t in para.findall('.//w:t', namespaces={'w': w_ns}) if t.text).strip()
+            if para_idx not in para_to_block_idx or not para_text or not comment_texts:
+                continue
+            block = para_to_block_idx[para_idx]
+            content_indices = block['content_indices']
+            idx_in_block = content_indices.index(para_idx)
+            context_text = ""
+            if idx_in_block > 0:
+                prev_idx = content_indices[idx_in_block - 1]
+                prev_text = ''.join(t.text for t in paragraphs[prev_idx].findall('.//w:t', namespaces={'w': w_ns}) if t.text).strip()
+                if prev_text:
+                    context_text += f"同区块前文：{prev_text}\n"
+            if idx_in_block < len(content_indices) - 1:
+                next_idx = content_indices[idx_in_block + 1]
+                next_text = ''.join(t.text for t in paragraphs[next_idx].findall('.//w:t', namespaces={'w': w_ns}) if t.text).strip()
+                if next_text:
+                    context_text += f"同区块后文：{next_text}"
+            
+            match = deepseek_context_aware_match(para_text, comment_texts, context_text, threshold=CONCURRENT_CONFIG['threshold'])
+            if match:
+                all_results.append({
+                    'para_idx': para_idx,
+                    'para': para,
+                    'para_text': para_text,
+                    'match': match,
+                    'success': True
+                })
+            else:
+                all_results.append({
+                    'para_idx': para_idx,
+                    'para': para,
+                    'para_text': para_text,
+                    'match': None,
+                    'success': False
+                })
+    
+    # 处理并发结果
+    for result in all_results:
+        if not result['success']:
             continue
-        # 构建同区块下的上下文
-        block = para_to_block_idx[para_idx]
-        content_indices = block['content_indices']
-        idx_in_block = content_indices.index(para_idx)
-        context_text = ""
-        if idx_in_block > 0:
-            prev_idx = content_indices[idx_in_block - 1]
-            prev_text = ''.join(t.text for t in paragraphs[prev_idx].findall('.//w:t', namespaces={'w': w_ns}) if t.text).strip()
-            if prev_text:
-                context_text += f"同区块前文：{prev_text}\n"
-        if idx_in_block < len(content_indices) - 1:
-            next_idx = content_indices[idx_in_block + 1]
-            next_text = ''.join(t.text for t in paragraphs[next_idx].findall('.//w:t', namespaces={'w': w_ns}) if t.text).strip()
-            if next_text:
-                context_text += f"同区块后文：{next_text}"
-        # 匹配批注
-        match = deepseek_context_aware_match(para_text, comment_texts, context_text, threshold=0.7)
-        if not match:
-            continue
-        text_to_find, original_comment, _, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent = match
+            
+        para_idx = result['para_idx']
+        para = result['para']
+        para_text = result['para_text']
+        text_to_find, original_comment, _, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent = result['match']
         comment_content = original_comment
         comment_id = str(current_id)
         
@@ -1244,11 +1642,14 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         else:
             print(f"    原文与批注逻辑是否一致: 全局性批注不进行逻辑分析")
         if comment_type == 'global_comment':
-            print(f"    📝 这是全局性批注，将在批注内容前添加【全局】标识")
+            print(f"    这是全局性批注，将在批注内容前添加【全局】标识")
+        elif comment_type == 'fuzzy_match':
+            print(f"    这是模糊匹配批注，将在批注内容前添加【模糊】标识")
         if is_title:
             print(f"    ⚠ 当前段落是标题，将跳过批注")
         if comment_type == 'specific_error' and logic_consistent:
             print(f"    ⚠ 具体错误批注：原文与批注逻辑一致，将跳过批注")
+        
         # 在该段落内进行精确的跨run文本定位
         runs = para.findall('.//w:r', namespaces={'w': w_ns})
         run_map = []
@@ -1314,13 +1715,25 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         p1 = etree.Element(W('p'))
         r1 = etree.Element(W('r'))
         t1 = etree.Element(W('t'))
-        # 如果是全局性批注，在前面加上【全局】标识
+        # 根据批注类型添加相应标识
         if comment_type == 'global_comment':
             comment_content = "【全局】" + comment_content
+        elif comment_type == 'fuzzy_match':
+            comment_content = "【模糊】" + comment_content
         t1.text = clean_comment_text(comment_content)
         r1.append(t1)
         p1.append(r1)
         comment_elem.append(p1)
+        
+        # 空行
+        p_empty = etree.Element(W('p'))
+        r_empty = etree.Element(W('r'))
+        t_empty = etree.Element(W('t'))
+        t_empty.text = ""
+        r_empty.append(t_empty)
+        p_empty.append(r_empty)
+        comment_elem.append(p_empty)
+        
         # 第二行：匹配原因
         p2 = etree.Element(W('p'))
         r2 = etree.Element(W('r'))
@@ -1329,51 +1742,65 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         r2.append(t2)
         p2.append(r2)
         comment_elem.append(p2)
-        # 第三行：上下文分析
-        p3 = etree.Element(W('p'))
-        r3 = etree.Element(W('r'))
-        t3 = etree.Element(W('t'))
-        t3.text = clean_comment_text("上下文分析：" + (context_analysis or ""))
-        r3.append(t3)
-        p3.append(r3)
-        comment_elem.append(p3)
-        # 第四行：错误类型
-        p4 = etree.Element(W('p'))
-        r4 = etree.Element(W('r'))
-        t4 = etree.Element(W('t'))
-        t4.text = clean_comment_text("错误类型：" + (error_type or ""))
-        r4.append(t4)
-        p4.append(r4)
-        comment_elem.append(p4)
-        # 第五行：批注类型
-        p5 = etree.Element(W('p'))
-        r5 = etree.Element(W('r'))
-        t5 = etree.Element(W('t'))
-        type_text = "全局性批注" if comment_type == 'global_comment' else "具体错误批注"
-        t5.text = clean_comment_text("批注类型：" + type_text)
-        r5.append(t5)
-        p5.append(r5)
-        comment_elem.append(p5)
-        # 第六行：是否为标题
-        p6 = etree.Element(W('p'))
-        r6 = etree.Element(W('r'))
-        t6 = etree.Element(W('t'))
-        t6.text = clean_comment_text("是否为标题：" + str(is_title))
-        r6.append(t6)
-        p6.append(r6)
-        comment_elem.append(p6)
-        # 第七行：原文与批注逻辑是否一致
-        p7 = etree.Element(W('p'))
-        r7 = etree.Element(W('r'))
-        t7 = etree.Element(W('t'))
-        t7.text = clean_comment_text("原文与批注逻辑是否一致：" + str(logic_consistent))
-        r7.append(t7)
-        p7.append(r7)
-        comment_elem.append(p7)
         comments_root.append(comment_elem)
         print(f"    ✓ 成功插入批注。")
         current_id += 1
     
+    end_time = time.time()
+    processing_time = end_time - start_time
+    print(f"\n✓ 并发批注处理完成，总耗时: {processing_time:.2f} 秒")
+    print(f"✓ 成功处理 {len([r for r in all_results if r['success']])} 个段落")
+    
+    # 性能统计
+    successful_matches = len([r for r in all_results if r['success']])
+    total_processed = len(all_results)
+    success_rate = (successful_matches / total_processed * 100) if total_processed > 0 else 0
+    avg_time_per_para = processing_time / total_processed if total_processed > 0 else 0
+    
+    print(f"\n=== 性能统计 ===")
+    print(f"  总段落数: {total_processed}")
+    print(f"  成功匹配: {successful_matches}")
+    print(f"  成功率: {success_rate:.1f}%")
+    print(f"  总耗时: {processing_time:.2f} 秒")
+    print(f"  平均每段耗时: {avg_time_per_para:.3f} 秒")
+    
+    if CONCURRENT_CONFIG['enabled']:
+        estimated_serial_time = total_processed * avg_time_per_para
+        speedup = estimated_serial_time / processing_time if processing_time > 0 else 1
+        print(f"  预估串行耗时: {estimated_serial_time:.2f} 秒")
+        # print(f"  加速比: {speedup:.2f}x")
+        
+        # 性能分析和建议
+        print(f"\n=== 性能分析 ===")
+        if speedup < 1.5:
+            print(f"  ⚠️ 加速比较低 ({speedup:.2f}x)，可能的原因：")
+            print(f"    - API响应时间较长 ({avg_time_per_para:.1f}秒/段)")
+            print(f"    - 并发数可能不够 (当前: {CONCURRENT_CONFIG['max_workers']})")
+            print(f"    - 网络延迟较高")
+            print(f"  建议：")
+            print(f"    - 增加并发数到 8-10")
+            print(f"    - 检查网络连接")
+            print(f"    - 考虑降低API超时时间")
+        elif speedup < 3.0:
+            print(f"  ✓ 加速比中等 ({speedup:.2f}x)，有优化空间")
+            print(f"  建议：")
+            print(f"    - 可以尝试增加并发数")
+            print(f"    - 优化批次大小")
+        else:
+            print(f"  🎉 加速比优秀 ({speedup:.2f}x)，并发效果很好！")
+        
+        # 计算API调用效率
+        total_api_calls = total_processed
+        api_calls_per_second = total_api_calls / processing_time if processing_time > 0 else 0
+        print(f"  API调用效率: {api_calls_per_second:.2f} 次/秒")
+        
+        if api_calls_per_second < 0.5:
+            print(f"  ⚠️ API调用效率较低，建议增加并发数")
+        elif api_calls_per_second < 1.0:
+            print(f"  ✓ API调用效率中等")
+        else:
+            print(f"  🎉 API调用效率很高！")
+ 
     # 处理未匹配的批注：合并为一个批注（每条回车分隔）
     print(f"\n=== 处理未匹配的批注 ===")
     unmatched_comments = []
@@ -1450,8 +1877,8 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     doc_tree.write(doc_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
     comments_tree.write(comments_xml_path, xml_declaration=True, encoding='utf-8', standalone='yes')
     
-    # 第四步：打包为新的docx文件
-    print("\n=== 第四步：打包为新的docx文件 ===")
+    # 第三步：打包为新的docx文件
+    print("\n=== 第三步：打包为新的docx文件 ===")
     
     # 确保 word/_rels/document.xml.rels 文件存在并包含批注关系
     rels_path = os.path.join(temp_dir, 'word', '_rels', 'document.xml.rels')
