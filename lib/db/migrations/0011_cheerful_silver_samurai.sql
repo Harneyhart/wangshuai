@@ -1,0 +1,1 @@
+ALTER TABLE "homeworks" ADD COLUMN "deadline" timestamp NOT NULL;

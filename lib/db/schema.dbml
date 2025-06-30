@@ -1,0 +1,218 @@
+table assistants_to_course_hours {
+  assistant_id varchar(255) [not null]
+  course_hour_id varchar(255) [not null]
+
+  indexes {
+    (assistant_id, course_hour_id) [pk]
+  }
+}
+
+table attachments {
+  id varchar(255) [pk, not null]
+  user_id varchar(21) [not null]
+  name varchar(255) [not null]
+  file_name varchar(255) [not null]
+  file_key varchar(255) [not null, unique]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table classes {
+  id varchar(255) [pk, not null]
+  name varchar(100) [not null]
+  is_active smallint [default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table course_hours {
+  id varchar(255) [pk, not null]
+  course_plan_id varchar(255) [not null]
+  class_room varchar(255) [not null]
+  start_time timestamp [not null]
+  end_time timestamp [not null]
+  is_active smallint [default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table course_plans {
+  id varchar(255) [pk, not null]
+  course_id varchar(255) [not null]
+  class_id varchar(255) [not null]
+  year integer [not null]
+  semester integer [not null, default: 0]
+  is_active smallint [default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table course_hours_to_attachments {
+  course_plan_id varchar(255) [not null]
+  attachment_id varchar(255) [not null]
+
+  indexes {
+    (course_plan_id, attachment_id) [pk]
+  }
+}
+
+table courses {
+  id varchar(255) [pk, not null]
+  name varchar(255) [not null]
+  description varchar(5000) [not null]
+  cover_id varchar(255)
+  is_active smallint [default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table demo_notes {
+  id serial [not null, unique, increment]
+  title varchar(256)
+  text varchar(256)
+  is_active smallint [default: 1]
+  user_id varchar(21) [not null]
+  create_time timestamp(3) [default: `now()`]
+}
+
+table homeworks {
+  id varchar(255) [pk, not null]
+  course_plan_id varchar(255) [not null]
+  name varchar(255) [not null]
+  order integer [not null]
+  description varchar(5000)
+  deadline timestamp
+  is_active smallint [default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table operators_to_course_hours {
+  operator_id varchar(255) [not null]
+  course_hour_id varchar(255) [not null]
+
+  indexes {
+    (operator_id, course_hour_id) [pk]
+  }
+}
+
+table sessions {
+  id varchar(255) [pk, not null]
+  user_id varchar(21) [not null]
+  expires_at "timestamp with time zone" [not null]
+
+  indexes {
+    user_id [name: 'session_user_idx']
+  }
+}
+
+table students {
+  id varchar(255) [pk, not null]
+  user_id varchar(21) [not null]
+  name varchar(10) [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table students_to_classes {
+  student_id varchar(255) [not null]
+  class_id varchar(255) [not null]
+
+  indexes {
+    (student_id, class_id) [pk]
+  }
+}
+
+table submissions {
+  id varchar(255) [pk, not null]
+  studentId varchar(255) [not null]
+  homework_id varchar(255) [not null]
+  score integer
+  text varchar(5000)
+  comment varchar(5000)
+  is_active smallint [default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table submissions_to_attachments {
+  submission_id varchar(255) [not null]
+  attachment_id varchar(255) [not null]
+
+  indexes {
+    (submission_id, attachment_id) [pk]
+  }
+}
+
+table teachers {
+  id varchar(255) [pk, not null]
+  user_id varchar(21) [not null]
+  name varchar(10) [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+table teachers_to_course_hours {
+  teacher_id varchar(255) [not null]
+  course_hour_id varchar(255) [not null]
+
+  indexes {
+    (teacher_id, course_hour_id) [pk]
+  }
+}
+
+table users {
+  id varchar(21) [pk, not null]
+  name varchar(50) [not null, unique]
+  email varchar(255) [not null, unique]
+  hashed_password varchar(255)
+  is_active smallint [default: 1]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone"
+}
+
+ref: assistants_to_course_hours.assistant_id > teachers.id
+
+ref: assistants_to_course_hours.course_hour_id > course_hours.id
+
+ref: attachments.user_id - users.id
+
+ref: courses.cover_id - attachments.id
+
+ref: course_hours.course_plan_id > course_plans.id
+
+ref: course_plans.course_id > courses.id
+
+ref: course_plans.class_id > classes.id
+
+ref: course_hours_to_attachments.course_plan_id > course_plans.id
+
+ref: course_hours_to_attachments.attachment_id > attachments.id
+
+ref: homeworks.course_plan_id > course_plans.id
+
+ref: operators_to_course_hours.operator_id > teachers.id
+
+ref: operators_to_course_hours.course_hour_id > course_hours.id
+
+ref: sessions.user_id - users.id
+
+ref: students.user_id - users.id
+
+ref: students_to_classes.student_id > students.id
+
+ref: students_to_classes.class_id > classes.id
+
+ref: submissions.studentId - students.id
+
+ref: submissions.homework_id > homeworks.id
+
+ref: submissions_to_attachments.submission_id > submissions.id
+
+ref: submissions_to_attachments.attachment_id > attachments.id
+
+ref: teachers.user_id - users.id
+
+ref: teachers_to_course_hours.teacher_id > teachers.id
+
+ref: teachers_to_course_hours.course_hour_id > course_hours.id

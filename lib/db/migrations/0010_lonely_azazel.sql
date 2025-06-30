@@ -1,0 +1,1 @@
+ALTER TABLE "courses" ADD COLUMN "is_active" smallint DEFAULT 1;

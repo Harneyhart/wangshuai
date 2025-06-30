@@ -1,0 +1,1 @@
+ALTER TABLE "demo_notes" ADD COLUMN "user_id" varchar(21) NOT NULL;
