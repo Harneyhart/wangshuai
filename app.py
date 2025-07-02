@@ -21,6 +21,8 @@ import concurrent.futures
 import threading
 from queue import Queue
 import time
+import random
+from collections import Counter
 
 
 app = Flask(__name__)
@@ -36,10 +38,13 @@ DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions'
 
 CONCURRENT_CONFIG = {
     'enabled': True,           # 是否启用并发处理
-    'batch_size': 5,           # 每批处理的段落数量（从3增加到5）
-    'max_workers': 5,          # 最大并发线程数（从3增加到5）
+    'batch_size': 3,           # 每批处理的段落数量（从3增加到5）
+    'max_workers': 3,          # 最大并发线程数（从3增加到5）
     'threshold': 0.5           # 相似度阈值
 }
+
+# 线程锁，用于保护XML操作
+xml_lock = threading.Lock()
 
 # 动态调整并发参数
 def adjust_concurrent_config(total_paragraphs, total_comments):
@@ -176,28 +181,83 @@ def classify_questions_with_ai(question_numbers, full_text):
         "response_format": {"type": "json_object"}
     }
     
-    try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)  # 减少超时时间从60秒到30秒
-        if response.status_code != 200:
-            print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
-            return question_numbers, []
-        
-        result = response.json()
-        content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-        
-        import json
-        classification = json.loads(content)
-        
-        categories = classification.get('categories', [])
-        print(f"AI分类结果: {len(categories)} 个分类")
-        for cat in categories:
-            print(f"  - {cat['title']}: {cat['question_numbers']}")
-        
-        return question_numbers, categories
-        
-    except Exception as e:
-        print(f"  ❌ AI分类失败: {str(e)}")
-        return question_numbers, []
+    # 增加重试机制
+    max_retries = 3
+    retry_delay = 2  # 秒
+    
+    for attempt in range(max_retries):
+        try:
+            # 使用更长的超时时间和重试设置
+            session = requests.Session()
+            session.mount('https://', requests.adapters.HTTPAdapter(
+                max_retries=requests.adapters.Retry(
+                    total=3,
+                    backoff_factor=0.5,
+                    status_forcelist=[500, 502, 503, 504]
+                )
+            ))
+            
+            response = session.post(
+                DEEPSEEK_API_URL, 
+                headers=headers, 
+                json=data, 
+                timeout=(10, 60),  # (连接超时, 读取超时)
+                verify=True
+            )
+            
+            if response.status_code != 200:
+                print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
+                if attempt < max_retries - 1:
+                    print(f'  ⏳ 重试中... ({attempt + 1}/{max_retries})')
+                    time.sleep(retry_delay)
+                    continue
+                return None
+            
+            result = response.json()
+            content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+            
+            import json
+            classification = json.loads(content)
+            
+            categories = classification.get('categories', [])
+            print(f"AI分类结果: {len(categories)} 个分类")
+            for cat in categories:
+                print(f"  - {cat['title']}: {cat['question_numbers']}")
+            
+            return question_numbers, categories
+            
+        except requests.exceptions.ConnectionError as e:
+            print(f'  ❌ 连接错误 (尝试 {attempt + 1}/{max_retries}): {str(e)}')
+            if attempt < max_retries - 1:
+                print(f'  ⏳ 等待 {retry_delay} 秒后重试...')
+                time.sleep(retry_delay)
+                retry_delay *= 2  # 指数退避
+                continue
+            else:
+                print(f'  ❌ 连接失败，已达到最大重试次数')
+                return None
+                
+        except requests.exceptions.Timeout as e:
+            print(f'  ❌ 请求超时 (尝试 {attempt + 1}/{max_retries}): {str(e)}')
+            if attempt < max_retries - 1:
+                print(f'  ⏳ 等待 {retry_delay} 秒后重试...')
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            else:
+                print(f'  ❌ 请求超时，已达到最大重试次数')
+                return None
+                
+        except Exception as e:
+            print(f'  ❌ AI分类失败: {str(e)}')
+            if attempt < max_retries - 1:
+                print(f'  ⏳ 等待 {retry_delay} 秒后重试...')
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            else:
+                print(f'  ❌ API调用失败，已达到最大重试次数')
+                return None
 
 def add_title_comments_to_docx(docx_path, categories, output_path):
     """
@@ -228,7 +288,11 @@ def add_title_comments_to_docx(docx_path, categories, output_path):
         comments_root = comments_tree.getroot()
     else:
         MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
-        comments_root = etree.Element(f'{{{w_ns}}}comments', nsmap={'w': w_ns, 'mc': MC_NS})
+        W14_NS = "http://schemas.microsoft.com/office/word/2010/wordml"
+        W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"
+        WP14_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+        nsmap = {'w': w_ns, 'mc': MC_NS, 'w14': W14_NS, 'w15': W15_NS, 'wp14': WP14_NS}
+        comments_root = etree.Element(f'{{{w_ns}}}comments', nsmap=nsmap)
         comments_root.set(f"{{{MC_NS}}}Ignorable", "w14 w15 wp14")
         comments_tree = etree.ElementTree(comments_root)
 
@@ -349,7 +413,7 @@ def process_paragraph_batch(paragraph_batch, comment_texts, threshold=0.5, max_w
             # 调用原有的匹配函数
             match = deepseek_context_aware_match(para_text, comment_texts, context_text, threshold)
             if match:
-                text_to_find, original_comment, similarity_score, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent = match
+                text_to_find, original_comment, similarity_score, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent, modify_suggestion = match
                 return {
                     'para_idx': para_idx,
                     'para': para,
@@ -400,7 +464,7 @@ def process_paragraph_batch(paragraph_batch, comment_texts, threshold=0.5, max_w
                 
                 if result['success']:
                     para_idx = result['para_idx']
-                    text_to_find, original_comment, similarity_score, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent = result['match']
+                    text_to_find, original_comment, similarity_score, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent, modify_suggestion = result['match']
                     try:
                         print(f"  ✓ 并发处理段落 {para_idx} 匹配成功: '{original_comment[:50]}...' (相似度: {similarity_score:.3f})")
                     except:
@@ -503,73 +567,7 @@ def create_paragraph_batches(paragraphs, para_to_block_idx, comment_texts, batch
     print(f"✓ 创建了 {len(batches)} 个批次，总共 {sum(len(batch) for batch in batches)} 个段落")
     return batches
 
-def generate_fuzzy_match_reasoning(target_text, matched_comment, similarity_score, all_scores, best_index):
-    """
-    生成详细的模糊匹配原因
-    target_text: 当前段落文本
-    matched_comment: 匹配到的批注内容
-    similarity_score: 相似度分数
-    all_scores: 所有批注的相似度分数
-    best_index: 最佳匹配的批注索引
-    """
-    try:
-        # 分析相似度分布
-        sorted_scores = sorted(all_scores, reverse=True)
-        second_best_score = sorted_scores[1] if len(sorted_scores) > 1 else 0
-        score_gap = similarity_score - second_best_score
-        
-        # 分析文本相似性
-        target_words = set(target_text.lower().split())
-        comment_words = set(matched_comment.lower().split())
-        common_words = target_words.intersection(comment_words)
-        word_overlap_ratio = len(common_words) / max(len(target_words), len(comment_words)) if max(len(target_words), len(comment_words)) > 0 else 0
-        
-        # 生成详细原因
-        reasoning_parts = []
-        reasoning_parts.append(f"模糊匹配成功，相似度: {similarity_score:.3f}")
-        
-        # 相似度分析
-        if similarity_score >= 0.7:
-            reasoning_parts.append("相似度较高，存在较强的语义关联")
-        elif similarity_score >= 0.5:
-            reasoning_parts.append("相似度中等，存在一定的语义关联")
-        elif similarity_score >= 0.3:
-            reasoning_parts.append("相似度较低，但仍有部分语义关联")
-        else:
-            reasoning_parts.append("相似度很低，但为最佳匹配选项")
-        
-        # 竞争分析
-        if score_gap > 0.1:
-            reasoning_parts.append(f"与其他批注相比优势明显（差距: {score_gap:.3f}）")
-        elif score_gap > 0.05:
-            reasoning_parts.append(f"与其他批注相比略有优势（差距: {score_gap:.3f}）")
-        else:
-            reasoning_parts.append("与其他批注相似度接近，选择最高分项")
-        
-        # 词汇重叠分析
-        if word_overlap_ratio > 0.3:
-            reasoning_parts.append(f"词汇重叠率较高（{word_overlap_ratio:.1%}），存在共同关键词")
-        elif word_overlap_ratio > 0.1:
-            reasoning_parts.append(f"词汇重叠率中等（{word_overlap_ratio:.1%}），部分关键词匹配")
-        else:
-            reasoning_parts.append(f"词汇重叠率较低（{word_overlap_ratio:.1%}），主要基于语义相似性")
-        
-        # 内容相关性分析
-        if "错误" in matched_comment.lower() or "问题" in matched_comment.lower():
-            reasoning_parts.append("批注涉及错误或问题识别，与文档审查相关")
-        if "建议" in matched_comment.lower() or "修改" in matched_comment.lower():
-            reasoning_parts.append("批注包含建议或修改意见，具有指导意义")
-        if "条款" in matched_comment.lower() or "规定" in matched_comment.lower():
-            reasoning_parts.append("批注涉及条款或规定，与合同内容相关")
-        
-        # 总结
-        reasoning_parts.append("虽然未达到精确匹配标准，但基于语义相似性和内容相关性，该批注最适合当前段落")
-        
-        return "；".join(reasoning_parts)
-        
-    except Exception as e:
-        # 如果分析失败，返回基本原因
-        return f"模糊匹配，相似度: {similarity_score:.3f}，基于AI语义分析结果"
+
 
 def deepseek_context_aware_match(target_text, doc_texts, context_text="", threshold=0.5):
     """
@@ -604,9 +602,11 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 5. 精确性：批注是否针对段落中的特定错误内容，并且批注不要绑定到标题上，批注只与正文相绑定。
 6. 仿真性检查：仅对具体错误批注(specific_error)进行逻辑一致性分析。若原文逻辑是正确的与批注内容相符合的，就不要进行批注。例如：批注内容：验收日期定为3日，不可更改。原文内容：验收期为4月3日。这里原文与批注都是3日，逻辑相符合，不要进行批注。全局性批注(global_comment)不进行逻辑一致性分析。
 7. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本。
-8. 全局性批注：如果批注是对整个文档的宏观评价或建议，标记为global_comment类型，找到最适合的段落位置插入。
+8. 全局性批注：如果批注是对整个文档的宏观评价或建议，标记为global_comment类型，找到最适合的段落位置插入，且每个全局批注只应该匹配一次。
 9. 标题过滤：如果当前段落是标题（包含数字编号、章节标识等），则不进行批注匹配。
-10.模糊匹配：即使没有精确匹配，也要计算所有批注的相似度分数，用于后续模糊匹配，并且需要写出模糊为什么又能匹配，不要只写置信度，要将匹配上的原因写上。
+10. 直接使用：将你获得的批注作为prompt，然后根据这个批注找到原文中错误的地方。
+11. 如果原文中没有错误不要进行批注。
+12. 批注找到插入的地方之后，再加上修改建议.
 
 请严格按照以下JSON格式返回结果：
 {
@@ -621,6 +621,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "is_title": true/false(当前段落是否为标题),
     "logic_consistent": true/false(仅对specific_error有效，原文与批注逻辑是否一致),
     "all_similarity_scores": [所有批注的相似度分数列表，按批注顺序排列]
+    "modify_suggestion": "修改建议"
 }
 
 如果没有任何批注适合该段落，返回：
@@ -636,6 +637,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "is_title": false,
     "logic_consistent": true,
     "all_similarity_scores": [所有批注的相似度分数列表，按批注顺序排列]
+    "modify_suggestion": "修改建议"
 }"""
 
     user_prompt = f"""当前段落文本：
@@ -650,13 +652,12 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 请分析上述段落、上下文和批注，找出最匹配的组合，并按要求返回JSON。特别注意：
 1. 识别明显的错误，无论文本长度如何。
 2. target_text_in_paragraph 必须是当前段落中的实际文本，不能是上下文的文本。
-3. 如果批注是对整个文档的宏观评价或建议，标记为global_comment类型。
+3. 如果批注是对整个文档的宏观评价或建议，标记为global_comment类型，并且只应该匹配一次，找到最适合的段落位置插入。
 4. 仿真性检查：仅对具体错误批注(specific_error)进行逻辑一致性分析。如果原文内容与批注要求逻辑一致，则不进行批注。例如：批注说"验收日期定为3日"，原文说"验收期为4月3日"，两者都是3日，逻辑一致，不批注。全局性批注不进行逻辑一致性分析。
 5. 标题过滤：如果当前段落是标题（包含数字编号、章节标识等），则不进行批注匹配。
 6. 批注只与正文绑定，不与标题绑定。
-7. 全局性批注：找到最适合的段落位置插入，不进行逻辑一致性分析。
-8. 无论是否有精确匹配，都要计算所有批注的相似度分数，填入all_similarity_scores字段。
-9. 对于模糊匹配的情况，在reasoning字段中详细说明为什么选择这个批注，并且需要写出模糊为什么又能匹配，不要只写置信度，要将匹配上的原因写上。"""
+7. 全局性批注：找到最适合的段落位置插入，不进行逻辑一致性分析，且每个全局批注只应该匹配一次。
+8. 计算所有批注的相似度分数，填入all_similarity_scores字段。"""
 
     data = {
         "model": "deepseek-chat",
@@ -669,112 +670,139 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
         "response_format": {"type": "json_object"}
     }
     
-    try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)  # 减少超时时间从60秒到30秒
-        if response.status_code != 200:
-            print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
-            return None
-        
-        result = response.json()
-        content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-        
-        import json
-        match_result = json.loads(content)
-        
-        best_index = match_result.get('best_match_index')
-        similarity_score = match_result.get('similarity_score', 0.0)
-        text_in_para = match_result.get('target_text_in_paragraph')
-        reasoning = match_result.get('reasoning', '')
-        has_error = match_result.get('has_error', False)
-        error_type = match_result.get('error_type', '')
-        context_analysis = match_result.get('context_analysis', '')
-        comment_type = match_result.get('comment_type', 'specific_error')
-        is_title = match_result.get('is_title', False)
-        logic_consistent = match_result.get('logic_consistent', True)
-        all_similarity_scores = match_result.get('all_similarity_scores', [])
-        
-        print(f"  AI分析结果:")
-        # 显示当前批注内容（如果有匹配的话）
-        if best_index is not None and 0 <= best_index - 1 < len(doc_texts):
-            current_comment = doc_texts[best_index - 1]
-            print(f"    当前批注内容: {current_comment}")
-        else:
-            print(f"    当前批注内容: 无匹配")
-        print(f"    当前原文内容: {target_text}")
-        print(f"    相似度: {similarity_score}")
-        print(f"    所有批注相似度: {all_similarity_scores}")
-        
-        # 处理全局性批注和具体错误批注
-        if (best_index is not None and 
-            similarity_score >= threshold and 
-            (has_error or comment_type == 'global_comment') and
-            not is_title and
-            (comment_type == 'global_comment' or not logic_consistent)):
+    # 增加重试机制
+    max_retries = 3
+    retry_delay = 2  # 秒
+    
+    for attempt in range(max_retries):
+        try:
+            # 使用更长的超时时间和重试设置
+            session = requests.Session()
+            session.mount('https://', requests.adapters.HTTPAdapter(
+                max_retries=requests.adapters.Retry(
+                    total=3,
+                    backoff_factor=0.5,
+                    status_forcelist=[500, 502, 503, 504]
+                )
+            ))
             
-            actual_index = best_index - 1
-            if 0 <= actual_index < len(doc_texts):
-                matched_comment = doc_texts[actual_index]
+            response = session.post(
+                DEEPSEEK_API_URL, 
+                headers=headers, 
+                json=data, 
+                timeout=(10, 60),  # (连接超时, 读取超时)
+                verify=True
+            )
+            
+            if response.status_code != 200:
+                print(f'  ❌ DeepSeek API error: {response.status_code} - {response.text}')
+                if attempt < max_retries - 1:
+                    print(f'  ⏳ 重试中... ({attempt + 1}/{max_retries})')
+                    time.sleep(retry_delay)
+                    continue
+                return None
+            
+            result = response.json()
+            content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+            
+            import json
+            match_result = json.loads(content)
+            
+            best_index = match_result.get('best_match_index')
+            similarity_score = match_result.get('similarity_score', 0.0)
+            text_in_para = match_result.get('target_text_in_paragraph')
+            reasoning = match_result.get('reasoning', '')
+            has_error = match_result.get('has_error', False)
+            error_type = match_result.get('error_type', '')
+            context_analysis = match_result.get('context_analysis', '')
+            comment_type = match_result.get('comment_type', 'specific_error')
+            is_title = match_result.get('is_title', False)
+            logic_consistent = match_result.get('logic_consistent', True)
+            all_similarity_scores = match_result.get('all_similarity_scores', [])
+            modify_suggestion = match_result.get('modify_suggestion', '')
+            
+            print(f"  AI分析结果:")
+            # 显示当前批注内容（如果有匹配的话）
+            if best_index is not None and 0 <= best_index - 1 < len(doc_texts):
+                current_comment = doc_texts[best_index - 1]
+                print(f"    当前批注内容: {current_comment}")
+            else:
+                print(f"    当前批注内容: 无匹配")
+            print(f"    当前原文内容: {target_text}")
+            print(f"    相似度: {similarity_score}")
+            print(f"    所有批注相似度: {all_similarity_scores}")
+            
+            # 处理全局性批注和具体错误批注
+            if (best_index is not None and 
+                similarity_score >= threshold and 
+                (has_error or comment_type == 'global_comment') and
+                not is_title and
+                (comment_type == 'global_comment' or not logic_consistent)):
                 
-                # 对于全局性批注，使用段落开头作为锚点
-                if comment_type == 'global_comment':
-                    # 使用段落开头的实际文本，不添加省略号
-                    text_in_para = target_text[:50] if len(target_text) > 50 else target_text
-                    print(f"  ✓ 全局性批注，使用段落开头作为锚点: '{text_in_para}'")
-                
-                # 验证文本是否在段落中
-                if text_in_para and text_in_para in target_text:
-                    return text_in_para, matched_comment, similarity_score, actual_index, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent
+                actual_index = best_index - 1
+                if 0 <= actual_index < len(doc_texts):
+                    matched_comment = doc_texts[actual_index]
+                    
+                    # 对于全局性批注，使用段落开头作为锚点
+                    if comment_type == 'global_comment':
+                        # 使用段落开头的实际文本，不添加省略号
+                        text_in_para = target_text[:50] if len(target_text) > 50 else target_text
+                        print(f"  ✓ 全局性批注，使用段落开头作为锚点: '{text_in_para}'")
+                    
+                    # 验证文本是否在段落中
+                    if text_in_para and text_in_para in target_text:
+                        return text_in_para, matched_comment, similarity_score, actual_index, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent, modify_suggestion
+                    else:
+                        print(f"  ❌ 模型返回的文本 '{text_in_para}' 不在段落中。")
+                        return None
                 else:
-                    print(f"  ❌ 模型返回的文本 '{text_in_para}' 不在段落中。")
                     return None
             else:
+                # 去掉模糊匹配，只保留精确匹配
+                print(f"  ❌ 精确匹配失败，跳过此段落")
+                
+                if is_title:
+                    print(f"  ⚠ 当前段落是标题，跳过批注")
+                elif comment_type == 'specific_error' and logic_consistent:
+                    print(f"  ⚠ 具体错误批注：原文与批注逻辑一致，跳过批注")
+                elif not has_error and comment_type != 'global_comment':
+                    print(f"  ⚠ 未发现明显错误并且非全局性批注，跳过批注")
+                elif similarity_score < threshold:
+                    print(f"  ⚠ 相似度 {similarity_score} 低于阈值 {threshold}")
                 return None
-        else:
-            # ===== 新增代码：模糊匹配逻辑 =====
-            print(f"  ⚠ 精确匹配失败，开始模糊匹配...")
-            
-            # 检查是否有相似度分数
-            if all_similarity_scores and len(all_similarity_scores) == len(doc_texts):
-                # 找到相似度最高的批注
-                max_similarity = max(all_similarity_scores)
-                max_similarity_index = all_similarity_scores.index(max_similarity)
                 
-                print(f"    最高相似度: {max_similarity:.3f} (批注 {max_similarity_index + 1})")
-                
-                # 如果最高相似度 >= 0.2，进行模糊匹配
-                if max_similarity >= 0.2:
-                    print(f"    ✓ 模糊匹配成功，相似度: {max_similarity:.3f}")
-                    matched_comment = doc_texts[max_similarity_index]
-                    print(f"    当前批注内容: {matched_comment}")
-                    
-                    # 使用段落开头作为锚点
-                    text_in_para = target_text[:50] if len(target_text) > 50 else target_text
-                    
-                    # 生成详细的模糊匹配原因
-                    fuzzy_reasoning = generate_fuzzy_match_reasoning(target_text, matched_comment, max_similarity, all_similarity_scores, max_similarity_index)
-                    
-                    # 返回模糊匹配结果，在批注前添加【模糊】标记
-                    return text_in_para, matched_comment, max_similarity, max_similarity_index, fuzzy_reasoning, context_analysis, "模糊匹配", "fuzzy_match", is_title, True
-                
-                else:
-                    print(f"    ❌ 最高相似度 {max_similarity:.3f} 低于模糊匹配阈值 0.2")
+        except requests.exceptions.ConnectionError as e:
+            print(f'  ❌ 连接错误 (尝试 {attempt + 1}/{max_retries}): {str(e)}')
+            if attempt < max_retries - 1:
+                print(f'  ⏳ 等待 {retry_delay} 秒后重试...')
+                time.sleep(retry_delay)
+                retry_delay *= 2  # 指数退避
+                continue
             else:
-                print(f"    ❌ 无法获取相似度分数进行模糊匹配")
-            # ===== 新增代码结束 =====
-            
-            if is_title:
-                print(f"  ⚠ 当前段落是标题，跳过批注")
-            elif comment_type == 'specific_error' and logic_consistent:
-                print(f"  ⚠ 具体错误批注：原文与批注逻辑一致，跳过批注")
-            elif not has_error and comment_type != 'global_comment':
-                print(f"  ⚠ 未发现明显错误并且非全局性批注，跳过批注")
-            elif similarity_score < threshold:
-                print(f"  ⚠ 相似度 {similarity_score} 低于阈值 {threshold}")
-            return None
-            
-    except Exception as e:
-        print(f"  ❌ DeepSeek API调用或解析失败: {str(e)}")
-        return None
+                print(f'  ❌ 连接失败，已达到最大重试次数')
+                return None
+                
+        except requests.exceptions.Timeout as e:
+            print(f'  ❌ 请求超时 (尝试 {attempt + 1}/{max_retries}): {str(e)}')
+            if attempt < max_retries - 1:
+                print(f'  ⏳ 等待 {retry_delay} 秒后重试...')
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            else:
+                print(f'  ❌ 请求超时，已达到最大重试次数')
+                return None
+                
+        except Exception as e:
+            print(f'  ❌ DeepSeek API调用或解析失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}')
+            if attempt < max_retries - 1:
+                print(f'  ⏳ 等待 {retry_delay} 秒后重试...')
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            else:
+                print(f'  ❌ API调用失败，已达到最大重试次数')
+                return None
 
 
 # 清理和标准化文本
@@ -1449,9 +1477,9 @@ def clean_comment_text(text):
     """清理批注文本，确保特殊字符被正确转义"""
     return (text.replace("&", "&amp;")
                .replace("<", "&lt;")
-               .replace(">", "&gt;")
-               .replace('"', "&quot;")
-               .replace("'", "&apos;"))
+               .replace(">", "&gt;"))
+            #    .replace('"', "&quot;")
+            #    .replace("'", "&apos;"))
 
 def parse_docx_blocks(paragraphs):
     """
@@ -1539,7 +1567,11 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         comments_root = comments_tree.getroot()
     else:
         MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
-        comments_root = etree.Element(f'{{{w_ns}}}comments', nsmap={'w': w_ns, 'mc': MC_NS})
+        W14_NS = "http://schemas.microsoft.com/office/word/2010/wordml"
+        W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"
+        WP14_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+        nsmap = {'w': w_ns, 'mc': MC_NS, 'w14': W14_NS, 'w15': W15_NS, 'wp14': WP14_NS}
+        comments_root = etree.Element(f'{{{w_ns}}}comments', nsmap=nsmap)
         comments_root.set(f"{{{MC_NS}}}Ignorable", "w14 w15 wp14")
         comments_tree = etree.ElementTree(comments_root)
 
@@ -1548,6 +1580,9 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     
     # 跟踪已匹配的批注索引
     matched_comment_indices = set()
+    
+    # 跟踪已插入的全局批注，避免重复插入
+    inserted_global_comments = set()
     
     # 发处理段落批注匹配
     print(f"\n=== 开始并发批注处理 ===")
@@ -1559,6 +1594,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
     adjust_concurrent_config(total_paragraphs, total_comments)
     
     # 检查是否启用并发处理
+    # 所有文档都使用并发处理以提高速度，但增强错误处理
     if CONCURRENT_CONFIG['enabled']:
         print(f"✓ 启用并发处理模式")
         print(f"  批次大小: {CONCURRENT_CONFIG['batch_size']}")
@@ -1623,12 +1659,19 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         para_idx = result['para_idx']
         para = result['para']
         para_text = result['para_text']
-        text_to_find, original_comment, _, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent = result['match']
+        text_to_find, original_comment, _, comment_idx, reasoning, context_analysis, error_type, comment_type, is_title, logic_consistent, modify_suggestion = result['match']
         comment_content = original_comment
         comment_id = str(current_id)
         
         # 记录已匹配的批注索引
         matched_comment_indices.add(comment_idx)
+        
+        # 对于全局性批注，检查是否已经插入过
+        if comment_type == 'global_comment':
+            if comment_idx in inserted_global_comments:
+                print(f"  ⚠ 全局批注 {comment_idx} 已插入过，跳过重复插入")
+                continue
+            inserted_global_comments.add(comment_idx)
         
         print(f"  ✓ 段落 {para_idx} 匹配到批注: '{original_comment}'")
         print(f"    应附着于文本: '{text_to_find}'")
@@ -1643,14 +1686,15 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             print(f"    原文与批注逻辑是否一致: 全局性批注不进行逻辑分析")
         if comment_type == 'global_comment':
             print(f"    这是全局性批注，将在批注内容前添加【全局】标识")
-        elif comment_type == 'fuzzy_match':
-            print(f"    这是模糊匹配批注，将在批注内容前添加【模糊】标识")
+
         if is_title:
             print(f"    ⚠ 当前段落是标题，将跳过批注")
         if comment_type == 'specific_error' and logic_consistent:
             print(f"    ⚠ 具体错误批注：原文与批注逻辑一致，将跳过批注")
         
-        # 在该段落内进行精确的跨run文本定位
+        # === 修正批注锚点插入逻辑，完全模拟Word ===
+        # 1. 合并需要批注的文本区间到一个 run
+        # 2. 在 run 前插入 commentRangeStart，在 run 后插入 commentRangeEnd 和 commentReference
         runs = para.findall('.//w:r', namespaces={'w': w_ns})
         run_map = []
         full_para_text = ""
@@ -1664,6 +1708,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             print(f"    ⚠ 在段落 {para_idx} 中未精确定位到模型返回的文本，跳过。")
             continue
         end_pos = start_pos + len(text_to_find)
+        # 找到 run 区间
         start_run_idx, end_run_idx = -1, -1
         for i, r_info in enumerate(run_map):
             run_end_pos = r_info['start'] + len(r_info['text'])
@@ -1674,38 +1719,100 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                 break
         if start_run_idx == -1: continue
         if end_run_idx == -1: end_run_idx = len(run_map) - 1
-        first_run_to_wrap = run_map[start_run_idx]['run']
-        last_run_to_wrap = run_map[end_run_idx]['run']
-        parent = first_run_to_wrap.getparent()
-        if first_run_to_wrap.getparent() != parent or last_run_to_wrap.getparent() != parent:
-            print(f"    警告：跳过此批注，元素位置已改变")
-            continue
+        # 合并区间内所有 run 的文本到第一个 run
+        merged_text = ""
+        for i in range(start_run_idx, end_run_idx + 1):
+            merged_text += run_map[i]['text']
+        # 清空区间内所有 run 的 <w:t>
+        for i in range(start_run_idx, end_run_idx + 1):
+            for t in run_map[i]['run'].findall('.//w:t', namespaces={'w': w_ns}):
+                t.text = ""
+        # 在第一个 run 的第一个 <w:t> 填入合并后的文本
+        first_run = run_map[start_run_idx]['run']
+        t_list = first_run.findall('.//w:t', namespaces={'w': w_ns})
+        if t_list:
+            t_list[0].text = merged_text
+        # 插入 commentRangeStart
+        parent = first_run.getparent()
         comment_start_node = etree.Element(W('commentRangeStart'))
         comment_start_node.set(W('id'), comment_id)
-        try:
-            first_run_index = parent.index(first_run_to_wrap)
-            parent.insert(first_run_index, comment_start_node)
-        except (ValueError, IndexError) as e:
-            print(f"    警告：插入commentRangeStart失败: {e}")
-            continue
+        
+        # 使用线程锁保护XML插入操作
+        with xml_lock:
+            try:
+                # 重新获取当前索引，因为可能在并发环境下发生变化
+                current_first_run_index = parent.index(first_run) if first_run in parent else -1
+                if current_first_run_index >= 0:
+                    parent.insert(current_first_run_index, comment_start_node)
+                else:
+                    # 如果找不到索引，添加到开头
+                    parent.insert(0, comment_start_node)
+            except Exception as e:
+                print(f"    ⚠ 插入commentRangeStart失败: {str(e)}")
+                # 尝试添加到段落开头
+                try:
+                    parent.insert(0, comment_start_node)
+                except Exception as e2:
+                    print(f"    ❌ 插入commentRangeStart到开头也失败: {str(e2)}")
+                    # 最后尝试添加到末尾
+                    try:
+                        parent.append(comment_start_node)
+                    except Exception as e3:
+                        print(f"    ❌ 插入commentRangeStart到末尾也失败: {str(e3)}")
+                        print(f"    ❌ 跳过段落 {para_idx} 的批注插入")
+                        continue
+        
+        # 插入 commentRangeEnd
+        last_run = run_map[end_run_idx]['run']
         comment_end_node = etree.Element(W('commentRangeEnd'))
         comment_end_node.set(W('id'), comment_id)
-        try:
-            last_run_index = parent.index(last_run_to_wrap)
-            parent.insert(last_run_index + 1, comment_end_node)
-        except (ValueError, IndexError) as e:
-            print(f"    警告：插入commentRangeEnd失败: {e}")
-            continue
+        
+        with xml_lock:
+            try:
+                # 重新获取当前索引
+                current_last_run_index = parent.index(last_run) if last_run in parent else -1
+                if current_last_run_index >= 0:
+                    parent.insert(current_last_run_index + 1, comment_end_node)
+                else:
+                    # 如果找不到索引，添加到末尾
+                    parent.append(comment_end_node)
+            except Exception as e:
+                print(f"    ⚠ 插入commentRangeEnd失败: {str(e)}")
+                # 尝试添加到段落末尾
+                try:
+                    parent.append(comment_end_node)
+                except Exception as e2:
+                    print(f"    ❌ 插入commentRangeEnd到末尾也失败: {str(e2)}")
+                    # 如果还是失败，跳过这个批注
+                    print(f"    ❌ 跳过段落 {para_idx} 的批注插入")
+                    continue
+        
+        # 插入 commentReference
         comment_ref_run = etree.Element(W('r'))
         comment_ref_node = etree.Element(W('commentReference'))
         comment_ref_node.set(W('id'), comment_id)
         comment_ref_run.append(comment_ref_node)
-        try:
-            end_node_index = parent.index(comment_end_node)
-            parent.insert(end_node_index + 1, comment_ref_run)
-        except (ValueError, IndexError) as e:
-            print(f"    警告：插入commentReference失败: {e}")
-            continue
+        
+        with xml_lock:
+            try:
+                # 重新获取当前索引
+                current_last_run_index = parent.index(last_run) if last_run in parent else -1
+                if current_last_run_index >= 0:
+                    parent.insert(current_last_run_index + 2, comment_ref_run)
+                else:
+                    # 如果找不到索引，添加到末尾
+                    parent.append(comment_ref_run)
+            except Exception as e:
+                # 如果插入失败，尝试添加到段落末尾
+                print(f"    ⚠ 插入commentReference失败，尝试添加到段落末尾: {str(e)}")
+                try:
+                    parent.append(comment_ref_run)
+                except Exception as e2:
+                    print(f"    ❌ 插入commentReference到末尾也失败: {str(e2)}")
+                    # 如果还是失败，跳过这个批注
+                    print(f"    ❌ 跳过段落 {para_idx} 的批注插入")
+                    continue
+        # ...后续批注内容生成逻辑保持不变...
         # 创建批注内容到comments.xml
         comment_elem = etree.Element(W('comment'))
         comment_elem.set(W('id'), comment_id)
@@ -1713,36 +1820,70 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         comment_elem.set(W('date'), datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
         # 第一行：批注内容
         p1 = etree.Element(W('p'))
+        p1.set(f'{{{W14_NS}}}paraId', gen_para_id())
+        pPr = etree.Element(W('pPr'))
+        pStyle = etree.Element(W('pStyle'))
+        pStyle.set(W('val'), 'CommentText')
+        pPr.append(pStyle)
+        p1.append(pPr)
+        r_ann = etree.Element(W('r'))
+        annotationRef = etree.Element(W('annotationRef'))
+        r_ann.append(annotationRef)
+        p1.append(r_ann)
         r1 = etree.Element(W('r'))
         t1 = etree.Element(W('t'))
-        # 根据批注类型添加相应标识
+        # 只显示原始批注内容，不包含匹配原因
         if comment_type == 'global_comment':
             comment_content = "【全局】" + comment_content
-        elif comment_type == 'fuzzy_match':
-            comment_content = "【模糊】" + comment_content
         t1.text = clean_comment_text(comment_content)
         r1.append(t1)
         p1.append(r1)
         comment_elem.append(p1)
         
-        # 空行
+        # 第二行：空行（回车）
         p_empty = etree.Element(W('p'))
+        p_empty.set(f'{{{W14_NS}}}paraId', gen_para_id())
         r_empty = etree.Element(W('r'))
         t_empty = etree.Element(W('t'))
-        t_empty.text = ""
+        t_empty.text = ""  # 空文本，形成空行
         r_empty.append(t_empty)
         p_empty.append(r_empty)
         comment_elem.append(p_empty)
         
-        # 第二行：匹配原因
-        p2 = etree.Element(W('p'))
-        r2 = etree.Element(W('r'))
-        t2 = etree.Element(W('t'))
-        t2.text = clean_comment_text("匹配原因：" + (reasoning or ""))
-        r2.append(t2)
-        p2.append(r2)
-        comment_elem.append(p2)
-        comments_root.append(comment_elem)
+        # 第三行：匹配原因
+        if reasoning:
+            p3 = etree.Element(W('p'))
+            p3.set(f'{{{W14_NS}}}paraId', gen_para_id())
+            r3 = etree.Element(W('r'))
+            t3 = etree.Element(W('t'))
+            t3.text = clean_comment_text("匹配原因：" + reasoning)
+            r3.append(t3)
+            p3.append(r3)
+            comment_elem.append(p3)
+
+        # 第四行：空行
+        p_empty = etree.Element(W('p'))
+        p_empty.set(f'{{{W14_NS}}}paraId', gen_para_id())
+        r_empty = etree.Element(W('r'))
+        t_empty = etree.Element(W('t'))
+        t_empty.text = ""  # 空文本，形成空行
+        r_empty.append(t_empty)
+        p_empty.append(r_empty)
+        comment_elem.append(p_empty)
+
+        # 第五行：修改建议
+        p4 = etree.Element(W('p'))
+        p4.set(f'{{{W14_NS}}}paraId', gen_para_id())
+        r4 = etree.Element(W('r'))
+        t4 = etree.Element(W('t'))
+        t4.text = clean_comment_text("修改建议：" + (modify_suggestion or ""))
+        r4.append(t4)
+        p4.append(r4)
+        comment_elem.append(p4)
+
+        # 使用线程锁保护comments.xml的写入
+        with xml_lock:
+            comments_root.append(comment_elem)
         print(f"    ✓ 成功插入批注。")
         current_id += 1
     
@@ -1802,74 +1943,74 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             print(f"  🎉 API调用效率很高！")
  
     # 处理未匹配的批注：合并为一个批注（每条回车分隔）
-    print(f"\n=== 处理未匹配的批注 ===")
-    unmatched_comments = []
-    for i, comment in enumerate(comments):
-        if i not in matched_comment_indices and comment.get('comment', '').strip():
-            unmatched_comments.append((i, comment))
+    # print(f"\n=== 处理未匹配的批注 ===")
+    # unmatched_comments = []
+    # for i, comment in enumerate(comments):
+    #     if i not in matched_comment_indices and comment.get('comment', '').strip():
+    #         unmatched_comments.append((i, comment))
     
-    if unmatched_comments:
-        print(f"找到 {len(unmatched_comments)} 个未匹配的批注，合并为一个批注插入")
-        # 找到文档的body元素
-        body = doc_root.find('.//w:body', namespaces={'w': w_ns})
-        if body is None:
-            print("警告：未找到文档body元素")
-        else:
-            # 插入一个可见文本作为所有未匹配批注的锚点
-            anchor_para = etree.Element(W('p'))
-            comment_id = str(current_id)
-            comment_start_node = etree.Element(W('commentRangeStart'))
-            comment_start_node.set(W('id'), comment_id)
-            anchor_para.append(comment_start_node)
-            run = etree.Element(W('r'))
-            t = etree.Element(W('t'))
-            t.text = "【未匹配成功批注】"
-            run.append(t)
-            anchor_para.append(run)
-            comment_end_node = etree.Element(W('commentRangeEnd'))
-            comment_end_node.set(W('id'), comment_id)
-            anchor_para.append(comment_end_node)
-            comment_ref_run = etree.Element(W('r'))
-            comment_ref_node = etree.Element(W('commentReference'))
-            comment_ref_node.set(W('id'), comment_id)
-            comment_ref_run.append(comment_ref_node)
-            anchor_para.append(comment_ref_run)
-            body.append(anchor_para)
-            # 合并所有未匹配内容为一个批注
-            comment_elem = etree.Element(W('comment'))
-            comment_elem.set(W('id'), comment_id)
-            comment_elem.set(W('author'), '批注系统')
-            comment_elem.set(W('date'), datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
-            for comment_idx, comment_data in unmatched_comments:
-                comment_content = comment_data['comment'].strip()
-                comment_text = comment_data.get('text', '').strip()
-                # 每条为一个段落
-                p = etree.Element(W('p'))
-                r = etree.Element(W('r'))
-                t = etree.Element(W('t'))
-                t.text = clean_comment_text(f"【未匹配成功】{comment_content}")
-                r.append(t)
-                p.append(r)
-                comment_elem.append(p)
-                # 原始序号
-                if comment_text:
-                    p2 = etree.Element(W('p'))
-                    r2 = etree.Element(W('r'))
-                    t2 = etree.Element(W('t'))
-                    t2.text = clean_comment_text("原始序号：" + comment_text)
-                    r2.append(t2)
-                    p2.append(r2)
-                    comment_elem.append(p2)
-                # 状态说明
-                p3 = etree.Element(W('p'))
-                r3 = etree.Element(W('r'))
-                t3 = etree.Element(W('t'))
-                t3.text = clean_comment_text("状态：未找到匹配的文档内容，作为独立批注添加")
-                r3.append(t3)
-                p3.append(r3)
-                comment_elem.append(p3)
-            comments_root.append(comment_elem)
-            current_id += 1
+    # if unmatched_comments:
+    #     print(f"找到 {len(unmatched_comments)} 个未匹配的批注，合并为一个批注插入")
+    #     # 找到文档的body元素
+    #     body = doc_root.find('.//w:body', namespaces={'w': w_ns})
+    #     if body is None:
+    #         print("警告：未找到文档body元素")
+    #     else:
+    #         # 插入一个可见文本作为所有未匹配批注的锚点
+    #         anchor_para = etree.Element(W('p'))
+    #         comment_id = str(current_id)
+    #         comment_start_node = etree.Element(W('commentRangeStart'))
+    #         comment_start_node.set(W('id'), comment_id)
+    #         anchor_para.append(comment_start_node)
+    #         run = etree.Element(W('r'))
+    #         t = etree.Element(W('t'))
+    #         t.text = "【未匹配成功批注】"
+    #         run.append(t)
+    #         anchor_para.append(run)
+    #         comment_end_node = etree.Element(W('commentRangeEnd'))
+    #         comment_end_node.set(W('id'), comment_id)
+    #         anchor_para.append(comment_end_node)
+    #         comment_ref_run = etree.Element(W('r'))
+    #         comment_ref_node = etree.Element(W('commentReference'))
+    #         comment_ref_node.set(W('id'), comment_id)
+    #         comment_ref_run.append(comment_ref_node)
+    #         anchor_para.append(comment_ref_run)
+    #         body.append(anchor_para)
+    #         # 合并所有未匹配内容为一个批注
+    #         comment_elem = etree.Element(W('comment'))
+    #         comment_elem.set(W('id'), comment_id)
+    #         comment_elem.set(W('author'), '批注系统')
+    #         comment_elem.set(W('date'), datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
+    #         for comment_idx, comment_data in unmatched_comments:
+    #             comment_content = comment_data['comment'].strip()
+    #             comment_text = comment_data.get('text', '').strip()
+    #             # 每条为一个段落
+    #             p = etree.Element(W('p'))
+    #             r = etree.Element(W('r'))
+    #             t = etree.Element(W('t'))
+    #             t.text = clean_comment_text(f"【未匹配成功】{comment_content}")
+    #             r.append(t)
+    #             p.append(r)
+    #             comment_elem.append(p)
+    #             # 原始序号
+    #             if comment_text:
+    #                 p2 = etree.Element(W('p'))
+    #                 r2 = etree.Element(W('r'))
+    #                 t2 = etree.Element(W('t'))
+    #                 t2.text = clean_comment_text("原始序号：" + comment_text)
+    #                 r2.append(t2)
+    #                 p2.append(r2)
+    #                 comment_elem.append(p2)
+    #             # 状态说明
+    #             p3 = etree.Element(W('p'))
+    #             r3 = etree.Element(W('r'))
+    #             t3 = etree.Element(W('t'))
+    #             t3.text = clean_comment_text("状态：未找到匹配的文档内容，作为独立批注添加")
+    #             r3.append(t3)
+    #             p3.append(r3)
+    #             comment_elem.append(p3)
+    #         comments_root.append(comment_elem)
+    #         current_id += 1
     else:
         print("✓ 所有批注都已成功匹配")
     
@@ -1932,6 +2073,38 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         rels_tree = etree.ElementTree(rels_root)
         rels_tree.write(rels_path, xml_declaration=True, encoding='utf-8', standalone='yes')
     
+    # === 打包前，确保 [Content_Types].xml 包含 comments.xml 类型声明 ===
+    content_types_path = os.path.join(temp_dir, '[Content_Types].xml')
+    if os.path.exists(content_types_path):
+        try:
+            parser = etree.XMLParser(remove_blank_text=True, recover=True)
+            tree = etree.parse(content_types_path, parser)
+            root = tree.getroot()
+            ns = {'ct': 'http://schemas.openxmlformats.org/package/2006/content-types'}
+            # 检查是否已有 comments.xml 类型声明
+            has_comments_override = any(
+                el.get('PartName') == '/word/comments.xml' and
+                el.get('ContentType') == 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml'
+                for el in root.findall('ct:Override', namespaces=ns)
+            )
+            if not has_comments_override:
+                # 插入 Override 节点
+                override = etree.Element('{http://schemas.openxmlformats.org/package/2006/content-types}Override')
+                override.set('PartName', '/word/comments.xml')
+                override.set('ContentType', 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml')
+                # 插入到最后一个 Override 之后
+                last_override = None
+                for el in root.findall('ct:Override', namespaces=ns):
+                    last_override = el
+                if last_override is not None:
+                    last_override.addnext(override)
+                else:
+                    root.append(override)
+                tree.write(content_types_path, xml_declaration=True, encoding='utf-8', standalone='yes')
+                print('✓ 已自动补全 [Content_Types].xml 中的 comments.xml 类型声明')
+        except Exception as e:
+            print(f'警告: 自动补全 [Content_Types].xml 失败: {e}')
+    
     # 删除旧的输出文件
     if os.path.exists(output_path):
         os.remove(output_path)
@@ -1943,41 +2116,48 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir, exist_ok=True)
         
+        # 打包前，删除 temp_dir 根目录下的 document.xml 和 comments.xml（只保留 word/ 目录下的）
+        for fname in ['document.xml', 'comments.xml']:
+            fpath = os.path.join(temp_dir, fname)
+            if os.path.exists(fpath):
+                os.remove(fpath)
+        
+        file_order = [
+            '[Content_Types].xml',
+            '_rels/.rels',
+            'word/_rels/document.xml.rels',
+            'word/document.xml',
+            'word/comments.xml'
+        ]
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as docx:
-            # 按特定顺序添加文件，确保docx结构正确
-            file_order = [
-                '[Content_Types].xml',
-                '_rels/.rels',
-                'word/_rels/document.xml.rels',
-                'word/document.xml',
-                'word/comments.xml'
-            ]
-            
-            # 首先添加必需的文件
+            written_files = set()
+            packed_files = []  # 用于统计打包的文件
             for file_name in file_order:
                 file_path = os.path.join(temp_dir, file_name)
+                arcname = file_name.replace('\\', '/')  # 统一为正斜杠
                 if os.path.exists(file_path):
-                    try:
-                        docx.write(file_path, file_name)
-                    except Exception as e:
-                        print(f"警告: 写入文件 {file_name} 时出错: {str(e)}")
-                        continue
-            
-            # 然后添加其他文件
+                    docx.write(file_path, arcname)
+                    written_files.add(arcname)
+                    packed_files.append(arcname)
             for foldername, subfolders, filenames in os.walk(temp_dir):
                 for filename in filenames:
                     file_path = os.path.join(foldername, filename)
-                    arcname = os.path.relpath(file_path, temp_dir)
-                    
-                    # 跳过已经添加的文件
-                    if arcname in file_order:
+                    arcname = os.path.relpath(file_path, temp_dir).replace('\\', '/')  # 统一为正斜杠
+                    if arcname in written_files:
                         continue
-                    
-                    try:
-                        docx.write(file_path, arcname)
-                    except Exception as e:
-                        print(f"警告: 写入文件 {arcname} 时出错: {str(e)}")
+                    if filename in ['document.xml', 'comments.xml'] and not arcname.startswith('word/'):
                         continue
+                    docx.write(file_path, arcname)
+                    written_files.add(arcname)
+                    packed_files.append(arcname)
+            # 打包结束后输出统计
+            print("=== 实际打包进docx的文件列表 ===")
+            for f in packed_files:
+                print(f)
+            print("=== 文件数量统计 ===")
+            for fname, count in Counter([os.path.basename(f) for f in packed_files]).items():
+                print(f"{fname}: {count} 个")
+            print(f"总文件数: {len(packed_files)}")
         
         # 验证输出文件
         try:
@@ -2002,6 +2182,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
         print(f"警告: 清理临时文件夹时出错: {str(e)}")
     
     print(f"✓ 最终输出文件: {output_path}")
+    
     return output_path
 
 # 使用LibreOffice将.docx文件转换为.doc格式，并重命名输出文件到指定路径。
@@ -2079,6 +2260,10 @@ def convert_docx_to_doc(docx_path, doc_path):
         raise Exception("LibreOffice转换超时")
     except Exception as e:
         raise Exception(f"转换docx到doc失败: {str(e)}")
+
+def gen_para_id():
+    # 生成8位十六进制字符串
+    return f"{random.randint(0, 0xFFFFFFFF):08X}"
 
 # 主程序入口，启动Flask应用，默认在本地开发环境运行。
 if __name__ == '__main__':
