@@ -592,7 +592,11 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
         print("  ⚠ 没有找到有效的候选批注")
         return None
     
-    system_prompt = """你是一个专业的文档批注匹配专家。你的任务是分析一个段落和一系列候选批注，找出最适合该段落的批注。
+    system_prompt = """你是一个专业的法务/律师/项目经理，负责为合同文档添加批注。请像真实人类一样写批注，要求如下：
+- 语言自然、简洁、直接，避免模板化。
+- 可以提问、建议、提醒、补充说明。
+- 遇到条款不明确、需补充、需确认的地方，直接提出。
+- 不要机械重复，不要只复述原文，要有针对性和场景感。
 
 重要规则：
 1. 精确错误识别：只要发现明显的错误，无论文本多短都要插入批注。
@@ -607,6 +611,11 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 10. 直接使用：将你获得的批注作为prompt，然后根据这个批注找到原文中错误的地方。
 11. 如果原文中没有错误不要进行批注。
 12. 批注找到插入的地方之后，再加上修改建议.
+13. 每条批注内容只能归为一种类型，不能同时是两种类型。
+14. 如果一条批注内容针对某一条款、某一段、某一细节（如付款条款、违约条款等），那么就归为具体批注类。
+15. 题出批注原因的语言要自然、简洁、直接，避免模板化。
+16. 批注内容要符合法律法规，不要出现违法违规的内容。
+17. 遇到条款不明确，需要补充、确认的原文，找到合适的批注进行批注，并表明原因，给出修改建议。
 
 请严格按照以下JSON格式返回结果：
 {
@@ -620,7 +629,7 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "comment_type": "批注类型：specific_error(具体错误) 或 global_comment(全局性批注)",
     "is_title": true/false(当前段落是否为标题),
     "logic_consistent": true/false(仅对specific_error有效，原文与批注逻辑是否一致),
-    "all_similarity_scores": [所有批注的相似度分数列表，按批注顺序排列]
+    "all_similarity_scores": [所有批注的相似度分数列表，按批注顺序排列],
     "modify_suggestion": "修改建议"
 }
 
@@ -636,8 +645,8 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
     "comment_type": "none",
     "is_title": false,
     "logic_consistent": true,
-    "all_similarity_scores": [所有批注的相似度分数列表，按批注顺序排列]
-    "modify_suggestion": "修改建议"
+    "all_similarity_scores": [所有批注的相似度分数列表，按批注顺序排列],
+    "modify_suggestion": ""
 }"""
 
     user_prompt = f"""当前段落文本：
@@ -1856,7 +1865,7 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
             p3.set(f'{{{W14_NS}}}paraId', gen_para_id())
             r3 = etree.Element(W('r'))
             t3 = etree.Element(W('t'))
-            t3.text = clean_comment_text("匹配原因：" + reasoning)
+            t3.text = clean_comment_text("批注原因：" + reasoning)
             r3.append(t3)
             p3.append(r3)
             comment_elem.append(p3)
