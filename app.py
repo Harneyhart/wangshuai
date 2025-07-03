@@ -593,10 +593,10 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
         return None
     
     system_prompt = """你是一个专业的法务/律师/项目经理，负责为合同文档添加批注。请像真实人类一样写批注，要求如下：
-- 语言自然、简洁、直接，避免模板化。
-- 可以提问、建议、提醒、补充说明。
-- 遇到条款不明确、需补充、需确认的地方，直接提出。
-- 不要机械重复，不要只复述原文，要有针对性和场景感。
+1. 语言自然、简洁、直接，避免模板化。
+2. 可以提问、建议、提醒、补充说明。
+3. 遇到条款不明确、需补充、需确认的地方，直接提出。
+4. 不要机械重复，不要只复述原文，要有针对性和场景感。
 
 重要规则：
 1. 精确错误识别：只要发现明显的错误，无论文本多短都要插入批注。
@@ -616,6 +616,8 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 15. 题出批注原因的语言要自然、简洁、直接，避免模板化。
 16. 批注内容要符合法律法规，不要出现违法违规的内容。
 17. 遇到条款不明确，需要补充、确认的原文，找到合适的批注进行批注，并表明原因，给出修改建议。
+18. 批注内容要符合合同条款，不要出现与合同条款不符的内容。
+19. 仔细检查文档的内容细节，类似于报价、服务内容、支付方式等联系上下文检查是否有表明，若没有在批注内找到是否有类似批注，若有则进行插入批注。
 
 请严格按照以下JSON格式返回结果：
 {
@@ -1371,8 +1373,8 @@ def upload_file():
             print("---")
             
         # 保存修改后的文档
-        output_base = 'output_' + os.path.splitext(os.path.basename(docx_path_for_processing))[0]
-        output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_base + '.docx')
+        original_name = os.path.splitext(os.path.basename(docx_path_for_processing))[0]
+        output_path = os.path.join(app.config['UPLOAD_FOLDER'], f'output_{original_name}.docx')
         
         # 检查输出文件是否已存在，如果存在则删除
         if os.path.exists(output_path):
@@ -1821,7 +1823,6 @@ def add_comments_to_docx_xml(docx_path, comments, output_path):
                     # 如果还是失败，跳过这个批注
                     print(f"    ❌ 跳过段落 {para_idx} 的批注插入")
                     continue
-        # ...后续批注内容生成逻辑保持不变...
         # 创建批注内容到comments.xml
         comment_elem = etree.Element(W('comment'))
         comment_elem.set(W('id'), comment_id)
