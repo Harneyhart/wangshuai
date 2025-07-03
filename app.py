@@ -611,11 +611,11 @@ def deepseek_context_aware_match(target_text, doc_texts, context_text="", thresh
 10. 直接使用：将你获得的批注作为prompt，然后根据这个批注找到原文中错误的地方。
 11. 如果原文中没有错误不要进行批注。
 12. 批注找到插入的地方之后，再加上修改建议.
-13. 每条批注内容只能归为一种类型，不能同时是两种类型。
-14. 如果一条批注内容针对某一条款、某一段、某一细节（如付款条款、违约条款等），那么就归为具体批注类。
-15. 题出批注原因的语言要自然、简洁、直接，避免模板化。
-16. 批注内容要符合法律法规，不要出现违法违规的内容。
-17. 遇到条款不明确，需要补充、确认的原文，找到合适的批注进行批注，并表明原因，给出修改建议。
+13. 每条批注内容只能归为一种类型，不能同时是两种类型。
+14. 如果一条批注内容针对某一条款、某一段、某一细节（如付款条款、违约条款等），那么就归为具体批注类。
+15. 题出批注原因的语言要自然、简洁、直接，避免模板化。
+16. 批注内容要符合法律法规，不要出现违法违规的内容。
+17. 遇到条款不明确，需要补充、确认的原文，找到合适的批注进行批注，并表明原因，给出修改建议。
 18. 批注内容要符合合同条款，不要出现与合同条款不符的内容。
 19. 仔细检查文档的内容细节，类似于报价、服务内容、支付方式等联系上下文检查是否有表明，若没有在批注内找到是否有类似批注，若有则进行插入批注。
 
@@ -1311,7 +1311,10 @@ def upload_file():
         return jsonify({'error': '未选择文件'}), 400
     if not word_file.filename.endswith(('.doc', '.docx')) or not excel_file.filename.endswith('.xlsx'):
         return jsonify({'error': '请上传正确的文件格式'}), 400
-        
+
+    # 这里获取原始文件名（去掉扩展名）
+    original_name = os.path.splitext(word_file.filename)[0]
+
     try:
         # 保存上传的文件
         word_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(word_file.filename))
@@ -1373,7 +1376,7 @@ def upload_file():
             print("---")
             
         # 保存修改后的文档
-        original_name = os.path.splitext(os.path.basename(docx_path_for_processing))[0]
+        # original_name = os.path.splitext(os.path.basename(docx_path_for_processing))[0]
         output_path = os.path.join(app.config['UPLOAD_FOLDER'], f'output_{original_name}.docx')
         
         # 检查输出文件是否已存在，如果存在则删除
