@@ -238,16 +238,103 @@ export async function upsertCourse(course: schema.CourseInsert) {
     throw new Error('upsertCourse error');
   }
 }
-// delete course by id
+// delete course by id - 硬删除课程及其所有相关数据
 export async function deleteCourseById(id: string) {
   try {
-    return await db
-      .update(schema.courses)
-      .set({ isActive: 0 })
-      .where(eq(schema.courses.id, id))
-      .returning();
+    if (!id) {
+      throw new Error('课程ID不能为空');
+    }
+
+    // 检查课程是否存在
+    const existingCourse = await db.query.courses.findFirst({
+      where: (table, { eq }) => eq(table.id, id),
+    });
+
+    if (!existingCourse) {
+      throw new Error('课程不存在');
+    }
+
+    // 在事务中执行删除操作，确保数据一致性
+    await db.transaction(async (tx) => {
+      // 1. 获取该课程的所有课程计划
+      const coursePlans = await tx.query.coursePlans.findMany({
+        where: (table, { eq }) => eq(table.courseId, id),
+      });
+
+      if (coursePlans.length > 0) {
+        const coursePlanIds = coursePlans.map(cp => cp.id);
+
+        // 2. 获取这些课程计划下的所有课时
+        const courseHours = await tx.query.courseHours.findMany({
+          where: (table, { inArray }) => inArray(table.coursePlanId, coursePlanIds),
+        });
+
+        if (courseHours.length > 0) {
+          const courseHourIds = courseHours.map(ch => ch.id);
+
+          // 3. 删除课时相关的教师、助教、实验员关系
+          await tx.delete(schema.teachersToCourseHours)
+            .where(inArray(schema.teachersToCourseHours.courseHourId, courseHourIds));
+          
+          await tx.delete(schema.assistantsToCourseHours)
+            .where(inArray(schema.assistantsToCourseHours.courseHourId, courseHourIds));
+          
+          await tx.delete(schema.operatorsToCourseHours)
+            .where(inArray(schema.operatorsToCourseHours.courseHourId, courseHourIds));
+
+          // 4. 删除课时记录
+          await tx.delete(schema.courseHours)
+            .where(inArray(schema.courseHours.coursePlanId, coursePlanIds));
+        }
+
+        // 5. 获取该课程的所有作业
+        const homeworks = await tx.query.homeworks.findMany({
+          where: (table, { inArray }) => inArray(table.coursePlanId, coursePlanIds),
+        });
+
+        if (homeworks.length > 0) {
+          const homeworkIds = homeworks.map(hw => hw.id);
+
+          // 6. 获取这些作业的所有提交
+          const submissions = await tx.query.submissions.findMany({
+            where: (table, { inArray }) => inArray(table.homeworkId, homeworkIds),
+          });
+
+          if (submissions.length > 0) {
+            const submissionIds = submissions.map(sub => sub.id);
+
+            // 7. 删除提交的附件关系
+            await tx.delete(schema.submissionsToAttachments)
+              .where(inArray(schema.submissionsToAttachments.submissionId, submissionIds));
+
+            // 8. 删除提交记录
+            await tx.delete(schema.submissions)
+              .where(inArray(schema.submissions.homeworkId, homeworkIds));
+          }
+
+          // 9. 删除作业记录
+          await tx.delete(schema.homeworks)
+            .where(inArray(schema.homeworks.coursePlanId, coursePlanIds));
+        }
+
+        // 10. 删除课程计划的附件关系
+        await tx.delete(schema.coursePlansToAttachments)
+          .where(inArray(schema.coursePlansToAttachments.coursePlanId, coursePlanIds));
+
+        // 11. 删除课程计划
+        await tx.delete(schema.coursePlans)
+          .where(eq(schema.coursePlans.courseId, id));
+      }
+
+      // 12. 最后删除课程本身
+      await tx.delete(schema.courses)
+        .where(eq(schema.courses.id, id));
+    });
+
+    return { success: true, message: '课程已彻底删除' };
   } catch (error) {
-    throw new Error('deleteCourse error');
+    console.error('删除课程失败:', error);
+    throw new Error('deleteCourse error: ' + (error instanceof Error ? error.message : '未知错误'));
   }
 }
 // upsert class

@@ -53,57 +53,8 @@ const CourseDetail = () => {
         { label: '晚上3-4节', value: '晚上3-4节' },
     ];
 
-    // 定义表格数据（可动态增减）
-    const [tableData, setTableData] = useState([
-        {
-            key: '1',
-            col1: '',
-            col2: '',
-            col3: '',
-            col4: '',
-            col5: '',
-            col6: '',
-            col7: '',
-            col8: '',
-            col9: '',
-        },
-        {
-            key: '2',
-            col1: '',
-            col2: '',
-            col3: '',
-            col4: '',
-            col5: '',
-            col6: '',
-            col7: '',
-            col8: '',
-            col9: '',
-        },
-        {
-            key: '3',
-            col1: '',
-            col2: '',
-            col3: '',
-            col4: '',
-            col5: '',
-            col6: '',
-            col7: '',
-            col8: '',
-            col9: '',
-        },
-        {
-            key: '4',
-            col1: '',
-            col2: '',
-            col3: '',
-            col4: '',
-            col5: '',
-            col6: '',
-            col7: '',
-            col8: '',
-            col9: '',
-        },
-    ]);
+    // 定义表格数据（从数据库动态获取）
+    const [tableData, setTableData] = useState<any[]>([]);
 
     // 重新编号函数
     const resequenceTableData = (data: any[]) => {
@@ -114,28 +65,47 @@ const CourseDetail = () => {
     };
 
     // 增加行的函数
-    const addRow = () => {
+    const addRow = async () => {
         modal.confirm({
             title: '确认操作',
-            content: '确定要增加一行吗？',
-            onOk() {
-                const newRow = {
-                    key: (tableData.length + 1).toString(),
-                    col1: '',
-                    col2: '',
-                    col3: '',
-                    col4: '',
-                    col5: '',
-                    col6: '',
-                    col7: '',
-                    col8: '',
-                    col9: '',
-                };
-                const newData = [...tableData, newRow];
-                // 重新编号
-                const resequencedData = resequenceTableData(newData);
-                setTableData(resequencedData);
-                message.success('成功增加一行');
+            content: '确定要增加一行吗？将为您创建一个新的课程安排记录。',
+            async onOk() {
+                try {
+                    // 先在数据库中创建新记录，获得真实ID
+                    const response = await fetch('/api/course-arrangements', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            courseId: courseId,
+                            classRoom: '',
+                            week: '',
+                            timeSlot: '',
+                            teacherIds: {
+                                theory: null,
+                                experiment: null,
+                                assistant: null,
+                            }
+                        }),
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        console.log('新建课程安排成功:', result);
+                        
+                        // 重新获取数据以确保显示最新的记录
+                        await refreshCourseArrangements();
+                        message.success('成功增加一行课程安排');
+                    } else {
+                        const errorData = await response.json();
+                        console.error('创建失败:', errorData);
+                        message.error(errorData.error || '创建课程安排失败');
+                    }
+                } catch (error) {
+                    console.error('创建课程安排失败:', error);
+                    message.error('创建课程安排失败');
+                }
             },
             onCancel() {
                 console.log('取消增加行');
@@ -151,40 +121,45 @@ const CourseDetail = () => {
         }
         
         modal.confirm({
-            title: '确认操作',
-            content: `确定要删除选中的 ${selectedKeys.length} 行吗？删除后将从数据库中完全移除。`,
+            title: '确认批量硬删除',
+            content: `确定要彻底删除选中的 ${selectedKeys.length} 行课程安排吗？这是硬删除操作，将完全从数据库中移除，无法恢复！`,
             async onOk() {
                 try {
-                    // 批量删除数据库记录
+                    // 获取选中的行数据
                     const selectedRows = tableData.filter(row => selectedKeys.includes(row.key));
+                    console.log('准备批量删除的行:', selectedRows);
+                    
+                    // 只删除有真实数据库ID的记录
                     const deletePromises = selectedRows
                         .filter((row: any) => row.id) // 只删除有数据库ID的记录
-                        .map((row: any) => 
-                            fetch(`/api/course-arrangements/${courseId}?planId=${row.id}`, {
+                        .map((row: any) => {
+                            console.log('删除记录ID:', row.id);
+                            return fetch(`/api/course-arrangements/${courseId}?planId=${row.id}`, {
                                 method: 'DELETE',
-                            })
-                        );
+                            });
+                        });
 
                     if (deletePromises.length > 0) {
+                        console.log(`开始执行 ${deletePromises.length} 个删除操作`);
                         const responses = await Promise.all(deletePromises);
                         const failedDeletes = responses.filter(response => !response.ok);
                         
                         if (failedDeletes.length > 0) {
+                            console.error(`${failedDeletes.length} 个记录删除失败`);
                             message.error(`${failedDeletes.length} 个记录删除失败`);
                             return;
                         }
 
+                        console.log('批量删除成功，重新获取数据');
                         // 删除成功后，重新获取数据确保一致性
                         await refreshCourseArrangements();
                         setSelectedKeys([]); // 清空勾选行
-                        message.success(`成功删除 ${selectedKeys.length} 行，已从数据库中完全移除`);
+                        message.success(`硬删除成功！${deletePromises.length} 条记录已从数据库中彻底移除，无法恢复`);
                     } else {
-                        // 如果没有数据库记录，只更新前端状态
-                        const newData = tableData.filter(row => !selectedKeys.includes(row.key));
-                        const resequencedData = resequenceTableData(newData);
-                        setTableData(resequencedData);
+                        // 如果没有有效的数据库记录可删除
+                        console.log('没有找到有效的数据库记录可删除');
+                        message.warning('选中的记录中没有有效的数据库记录可删除');
                         setSelectedKeys([]); // 清空勾选行
-                        message.success(`成功删除 ${selectedKeys.length} 行`);
                     }
                 } catch (error) {
                     console.error('批量删除失败:', error);
@@ -199,6 +174,12 @@ const CourseDetail = () => {
 
     // 编辑单行数据
     const handleEdit = (row: any) => {
+        // 检查是否有真实的数据库ID
+        if (!row.id) {
+            message.error('该记录还未保存到数据库，无法编辑');
+            return;
+        }
+
         setEditingRow(row);
 
         editForm.setFieldsValue({
@@ -218,6 +199,12 @@ const CourseDetail = () => {
         try {
             const values = await editForm.validateFields();
 
+            // 检查是否有真实的数据库ID
+            if (!editingRow.id) {
+                message.error('该记录缺少数据库ID，无法保存');
+                return;
+            }
+
             // 获取教师ID而不是教师名称
             const getTeacherId = (teacherName: string) => {
                 const teacher = teachers.find(t => t.name === teacherName);
@@ -225,7 +212,7 @@ const CourseDetail = () => {
             };
 
             const submitData = {
-                id: editingRow.id || editingRow.key, // 使用真实的数据库ID
+                id: editingRow.id, // 使用真实的数据库ID
                 courseId: courseId,
                 col1: values.col1, // 班级
                 col2: values.col2, // 理论教师
@@ -267,7 +254,7 @@ const CourseDetail = () => {
                 setEditModalVisible(false);
                 setEditingRow(null);
                 editForm.resetFields();
-                message.success('课程安排保存成功！班级、教师、教室信息已同步到数据库（时间信息暂未保存）');
+                message.success('课程安排保存成功！班级、教师、教室信息已同步到数据库');
             } else {
                 const errorData = await response.json();
                 console.error('编辑失败:', errorData);
@@ -329,48 +316,44 @@ const CourseDetail = () => {
             className: className,
             courseId: courseId
         });
+
+        // 检查是否有真实的数据库ID
+        if (!row.id) {
+            message.error('该记录还未保存到数据库，无法删除');
+            return;
+        }
         
         modal.confirm({
-            title: '确认删除',
-            content: `确定要删除"${className}"的课程安排吗？删除后将从数据库中完全移除。`,
-            okText: '确定删除',
+            title: '确认硬删除',
+            content: `确定要彻底删除"${className}"的课程安排吗？这是硬删除操作，将完全从数据库中移除，无法恢复！`,
+            okText: '确认硬删除',
             cancelText: '取消',
             okType: 'danger',
             async onOk() {
                 try {
-                    // 如果有数据库记录ID，同步删除数据库记录
-                    if ((row as any).id) {
-                        const deleteUrl = `/api/course-arrangements/${courseId}?planId=${(row as any).id}`;
-                        console.log('发送删除请求:', deleteUrl);
-                        
-                        const response = await fetch(deleteUrl, {
-                            method: 'DELETE',
-                        });
+                    const deleteUrl = `/api/course-arrangements/${courseId}?planId=${row.id}`;
+                    console.log('发送删除请求:', deleteUrl);
+                    
+                    const response = await fetch(deleteUrl, {
+                        method: 'DELETE',
+                    });
 
-                        console.log('删除响应状态:', response.status);
-                        
-                        if (!response.ok) {
-                            const errorData = await response.json();
-                            console.error('删除失败:', errorData);
-                            message.error(errorData.error || '删除数据库记录失败');
-                            return;
-                        }
-
-                        const responseData = await response.json();
-                        console.log('删除成功响应:', responseData);
-                        
-                        // 删除成功后，重新获取数据确保一致性
-                        console.log('重新获取数据...');
-                        await refreshCourseArrangements();
-                        message.success('删除成功，已从数据库中完全移除');
-                    } else {
-                        console.log('没有数据库ID，只更新前端状态');
-                        // 如果没有数据库ID，只更新前端状态
-                        const newData = tableData.filter(item => item.key !== row.key);
-                        const resequencedData = resequenceTableData(newData);
-                        setTableData(resequencedData);
-                        message.success('删除成功');
+                    console.log('删除响应状态:', response.status);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        console.error('删除失败:', errorData);
+                        message.error(errorData.error || '删除数据库记录失败');
+                        return;
                     }
+
+                    const responseData = await response.json();
+                    console.log('删除成功响应:', responseData);
+                    
+                    // 删除成功后，重新获取数据确保一致性
+                    console.log('重新获取数据...');
+                    await refreshCourseArrangements();
+                    message.success('硬删除成功！记录已从数据库中彻底移除，无法恢复');
                 } catch (error) {
                     console.error('删除失败:', error);
                     message.error('删除失败');
@@ -695,6 +678,8 @@ const CourseDetail = () => {
                                                         size="small" 
                                                         icon={<EditOutlined />}
                                                         onClick={() => handleEdit(row)}
+                                                        disabled={!(row as any).id}
+                                                        title={!(row as any).id ? '该记录还未保存到数据库，无法编辑' : '编辑该记录'}
                                                     >
                                                         编辑
                                                     </Button>
@@ -704,6 +689,8 @@ const CourseDetail = () => {
                                                         size="small" 
                                                         icon={<DeleteOutlined />}
                                                         onClick={() => handleDelete(row)}
+                                                        disabled={!(row as any).id}
+                                                        title={!(row as any).id ? '该记录还未保存到数据库，无法删除' : '删除该记录'}
                                                     >
                                                         删除
                                                     </Button>
@@ -811,14 +798,15 @@ const CourseDetail = () => {
                             >
                                 <Input placeholder="请输入教室（如：A101、实验楼B305等）" />
                             </Form.Item>
-                            {/* 时间选择器（仅前端显示，暂不保存到数据库） */}
+                            {/* 时间选择器（暂时禁用，需要运行数据库migration脚本） */}
                             <div style={{ display: 'flex', gap: 16 }}>
                                 <Form.Item
                                     label="选择星期"
                                     name="week"
                                     style={{ flex: 1 }}
+                                    help="时间功能暂不可用，需要运行数据库migration脚本"
                                 >
-                                    <Select placeholder="请选择星期（可选）" allowClear>
+                                    <Select placeholder="暂不可用" disabled>
                                         {weekOptions.map(option => (
                                             <Option key={option.value} value={option.value}>{option.label}</Option>
                                         ))}
@@ -828,8 +816,9 @@ const CourseDetail = () => {
                                     label="上课时间"
                                     name="timeSlot"
                                     style={{ flex: 1 }}
+                                    help="时间功能暂不可用，需要运行数据库migration脚本"
                                 >
-                                    <Select placeholder="请选择时间段（可选）" allowClear>
+                                    <Select placeholder="暂不可用" disabled>
                                         {timeSlotOptions.map(option => (
                                             <Option key={option.value} value={option.value}>{option.label}</Option>
                                         ))}

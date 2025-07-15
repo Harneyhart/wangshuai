@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { courseHours, teachersToCourseHours, assistantsToCourseHours, operatorsToCourseHours, coursePlans, courses, teachers, classes } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, asc } from 'drizzle-orm';
 
 // 获取特定课程的安排
 export async function GET(
@@ -15,7 +15,7 @@ export async function GET(
       return NextResponse.json({ error: '缺少课程ID' }, { status: 400 });
     }
 
-    // 查询课程安排
+    // 查询课程安排，按创建时间排序以保持稳定的显示顺序
     const arrangements = await db
       .select({
         id: courseHours.id,
@@ -30,7 +30,8 @@ export async function GET(
       .from(courseHours)
       .innerJoin(coursePlans, eq(courseHours.coursePlanId, coursePlans.id))
       .leftJoin(classes, eq(coursePlans.classId, classes.id))
-      .where(eq(coursePlans.courseId, courseId));
+      .where(eq(coursePlans.courseId, courseId))
+      .orderBy(asc(courseHours.createdAt)); // 按创建时间升序排列，保持稳定顺序
 
     // 获取每个课程安排的教师信息
     const arrangementsWithTeachers = await Promise.all(
@@ -66,10 +67,14 @@ export async function GET(
         const weekDay = arrangement.startTime || '';
         const timeSlot = arrangement.endTime || '';
 
+        // 处理占位符班级显示
+        const className = arrangement.className || '';
+        const displayClassName = className === '__EMPTY_PLACEHOLDER__' ? '' : className;
+
         return {
           id: arrangement.id,
           key: arrangement.id,
-          col1: arrangement.className || '', // 班级名称
+          col1: displayClassName,          // 如果是占位符班级则显示为空
           col2: theoryTeacher,             // 理论教师
           col3: experimentTeacher,         // 实验教师
           col4: assistant,                 // 助教
@@ -108,6 +113,22 @@ export async function DELETE(
       return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
+    // 先获取要删除的课程安排信息，以便后续清理孤立的课程计划
+    const courseHourToDelete = await db
+      .select({
+        id: courseHours.id,
+        coursePlanId: courseHours.coursePlanId,
+      })
+      .from(courseHours)
+      .where(eq(courseHours.id, planId))
+      .limit(1);
+
+    if (!courseHourToDelete.length) {
+      return NextResponse.json({ error: '课程安排不存在' }, { status: 404 });
+    }
+
+    const { coursePlanId } = courseHourToDelete[0];
+
     // 彻底删除教师关联关系
     await Promise.all([
       db.delete(teachersToCourseHours).where(eq(teachersToCourseHours.courseHourId, planId)),
@@ -119,6 +140,24 @@ export async function DELETE(
     await db
       .delete(courseHours)
       .where(eq(courseHours.id, planId));
+
+    // 检查该课程计划是否还有其他课程安排，如果没有则删除课程计划
+    const remainingCourseHours = await db
+      .select({ id: courseHours.id })
+      .from(courseHours)
+      .where(eq(courseHours.coursePlanId, coursePlanId))
+      .limit(1);
+
+    if (remainingCourseHours.length === 0) {
+      // 没有其他课程安排使用此计划，删除课程计划
+      await db
+        .delete(coursePlans)
+        .where(eq(coursePlans.id, coursePlanId));
+      
+      console.log('已删除孤立的课程计划:', coursePlanId);
+    }
+
+    console.log('硬删除完成 - 课程安排ID:', planId, '课程计划ID:', coursePlanId);
 
     return NextResponse.json({
       success: true,

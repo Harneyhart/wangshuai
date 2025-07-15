@@ -649,8 +649,8 @@ export async function createCourseHour(formData: CreateCourseHourItem) {
   const exist = await upsertCourseHour({
     ...formData,
     id,
-    startTime: formData.startTime.toISOString(),
-    endTime: formData.endTime.toISOString(),
+    startTime: formData.startTime,
+    endTime: formData.endTime,
   });
   if (!exist) {
     return false;
@@ -742,8 +742,8 @@ export async function updateCourseHourById(formData: UpdateCourseHourItem) {
   return await updateCourseHour({
     ...formData,
     id: courseHourId,
-    startTime: formData.startTime.toISOString(),
-    endTime: formData.endTime.toISOString(),
+    startTime: formData.startTime,
+    endTime: formData.endTime,
   });
 }
 // delete course hour by id
@@ -992,7 +992,8 @@ export async function getHomeworksForStudent() {
       return []; // 学生所在班级没有课程计划，返回空数组
     }
 
-    // 3. 只获取学生班级的已发布作业 (isActive = 1)
+            // 3. 获取学生班级的已发布作业 (isActive = 1)
+    // 查询条件：作业已发布 AND 作业的coursePlan在学生班级的coursePlan列表中
     const homeworkData = await db
       .select({
         id: schema.homeworks.id,
@@ -1003,12 +1004,10 @@ export async function getHomeworksForStudent() {
         coursePlanId: schema.homeworks.coursePlanId,
       })
       .from(schema.homeworks)
-      .where(
-        and(
-          eq(schema.homeworks.isActive, 1),
-          inArray(schema.homeworks.coursePlanId, coursePlanIds)
-        )
-      )
+      .where(and(
+        eq(schema.homeworks.isActive, 1),
+        inArray(schema.homeworks.coursePlanId, coursePlanIds)
+      ))
       .orderBy(desc(schema.homeworks.createdAt));
 
     // 4. 获取班级和课程信息
@@ -1173,6 +1172,8 @@ export type CreateSubmissionItem = {
   // 存在submissionId表示当前属于更新操作
   submissionId?: string;
 };
+
+
 // create submission
 export async function createSubmission(formData: CreateSubmissionItem) {
   // 通过 session 获取当前用户，再通过 students 获取学生id

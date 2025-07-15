@@ -6,7 +6,7 @@ import dayjs from 'dayjs';
 import { App, Button, Table, Tag, Modal, Typography, Space, Card, Statistic, Row, Col, Breadcrumb } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { ArrowLeftOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons';
-import { getHomeworksForTeacher, getHomeworkStatistic, getAllClasses } from '@/lib/course/actions';
+import { getHomeworksForTeacher, getHomeworkStatistic, getAllClasses, updateHomeworkById } from '@/lib/course/actions';
 import Link from 'next/link';
 
 const { Title, Text } = Typography;
@@ -41,7 +41,6 @@ interface Homework {
   className?: string;
   createdAt?: Date | string;
   deadline?: Date | string | null;
-  publishedClasses?: string; // 发布的班级ID列表，用逗号分隔
 }
 
 const HomeworkDetail = () => {
@@ -85,23 +84,20 @@ const HomeworkDetail = () => {
           if (targetHomework) {
             setHomeworkInfo(targetHomework);
             
-            // 如果作业已发布，解析发布的班级信息
-            if (targetHomework.status === '已发布' && targetHomework.publishedClasses) {
-              const classIds = targetHomework.publishedClasses.split(',').filter((id: string) => id.trim());
-              const publishedClassList = classIds.map((classId: string, index: number) => {
-                const classInfo = allClasses.find(cls => cls.id === classId.trim());
-                return {
-                  key: `${targetHomework.key}_${classId}`,
-                  classId: classId.trim(),
-                  className: classInfo?.name || '未知班级',
-                  courseName: targetHomework.courseName || '未知课程',
-                  homework: targetHomework.homework,
-                  publishTime: targetHomework.createdAt ? dayjs(targetHomework.createdAt).format('YYYY-MM-DD HH:mm') : '-',
-                  deadline: targetHomework.deadline ? dayjs(targetHomework.deadline).format('YYYY-MM-DD HH:mm') : '-',
-                  status: targetHomework.status,
-                  coursePlanId: targetHomework.coursePlanId || '',
-                };
-              });
+            // 如果作业已发布，显示通过课程计划发布
+            if (targetHomework.status === '已发布') {
+              // 显示作业是通过课程计划发布的
+              const publishedClassList = [{
+                key: `${targetHomework.key}_courseplan`,
+                classId: 'courseplan',
+                className: '通过课程计划发布',
+                courseName: targetHomework.courseName || '未知课程',
+                homework: targetHomework.homework,
+                publishTime: targetHomework.createdAt ? dayjs(targetHomework.createdAt).format('YYYY-MM-DD HH:mm') : '-',
+                deadline: targetHomework.deadline ? dayjs(targetHomework.deadline).format('YYYY-MM-DD HH:mm') : '-',
+                status: targetHomework.status,
+                coursePlanId: targetHomework.coursePlanId || '',
+              }];
               setPublishedClasses(publishedClassList);
             } else {
               setPublishedClasses([]);
@@ -159,31 +155,33 @@ const HomeworkDetail = () => {
   const handleRemoveClassFromPublish = async (record: PublishedClass) => {
     modal.confirm({
       title: '确认取消发布',
-      content: `确定要取消向 "${record.className}" 班发布作业 "${record.homework}" 吗？`,
+      content: `确定要取消发布作业 "${record.homework}" 吗？此操作将使作业对所有学生不可见。`,
       onOk: async () => {
         try {
           if (!homeworkInfo) return;
           
-          // 从发布列表中移除这个班级
-          const currentClassIds = homeworkInfo.publishedClasses?.split(',').filter(id => id.trim()) || [];
-          const updatedClassIds = currentClassIds.filter(id => id !== record.classId);
+          // 取消整个作业的发布状态
+          const homeworkData = {
+            id: homeworkInfo.key,
+            coursePlanId: homeworkInfo.coursePlanId || '',
+            name: homeworkInfo.homework,
+            description: homeworkInfo.description || '',
+            order: 1,
+            deadline: homeworkInfo.deadline ? new Date(homeworkInfo.deadline) : new Date(),
+            isActive: 0,
+          };
           
-          // 更新作业的发布班级列表
-          // 这里需要调用 updateHomeworkById API
-          console.log('需要更新作业发布班级列表:', updatedClassIds);
-          
-          // 临时更新前端显示
-          setPublishedClasses(prev => prev.filter(item => item.key !== record.key));
-          
-          // 如果没有班级了，需要将作业状态改为未发布
-          if (updatedClassIds.length === 0) {
-            setHomeworkInfo(prev => prev ? {...prev, status: '未发布', publishedClasses: ''} : null);
+          const res = await updateHomeworkById(homeworkData);
+          if (res) {
+            // 更新前端显示
+            setPublishedClasses([]);
+            setHomeworkInfo(prev => prev ? {...prev, status: '未发布'} : null);
+            message.success('作业已取消发布');
           } else {
-            setHomeworkInfo(prev => prev ? {...prev, publishedClasses: updatedClassIds.join(',')} : null);
+            message.error('取消发布失败');
           }
-          
-          message.success('取消发布成功');
         } catch (error) {
+          console.error('取消发布失败:', error);
           message.error('取消发布失败');
         }
       },
@@ -207,11 +205,11 @@ const HomeworkDetail = () => {
       ),
     },
     {
-      title: '班级名称',
+      title: '发布方式',
       dataIndex: 'className',
-      width: 120,
+      width: 150,
       render: (text) => (
-        <Tag color="blue">{text}</Tag>
+        <Tag color="green">{text}</Tag>
       ),
     },
     {
@@ -267,7 +265,7 @@ const HomeworkDetail = () => {
             icon={<DeleteOutlined />}
             onClick={() => handleRemoveClassFromPublish(record)}
           >
-            取消发布
+            取消作业发布
           </Button>
         </Space>
       ),
@@ -317,7 +315,7 @@ const HomeworkDetail = () => {
               />
             </Col>
             <Col span={6}>
-              <Statistic title="发布班级数" value={publishedClasses.length} suffix="个" />
+              <Statistic title="发布状态" value={homeworkInfo.status === '已发布' ? '已发布' : '未发布'} />
             </Col>
           </Row>
           <div style={{ marginTop: '16px' }}>
@@ -332,7 +330,7 @@ const HomeworkDetail = () => {
       )}
 
       {/* 班级发布情况表格 */}
-      <Card title="班级发布情况" style={{ marginBottom: '24px' }}>
+      <Card title="发布状态" style={{ marginBottom: '24px' }}>
         {homeworkInfo?.status === '已发布' ? (
           <Table
             columns={columns}
@@ -342,7 +340,7 @@ const HomeworkDetail = () => {
               pageSize: 10,
               showSizeChanger: true,
               showQuickJumper: true,
-              showTotal: (total) => `共发布到 ${total} 个班级`,
+              showTotal: (total) => `发布状态记录`,
             }}
             bordered
             size="middle"

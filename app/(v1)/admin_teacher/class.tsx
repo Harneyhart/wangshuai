@@ -118,14 +118,14 @@ const ClassList = () => {
         
         modal.confirm({
             title: '确认删除课程',
-            content: `确定要删除课程"${courseToDelete?.name}"吗？此操作不可恢复！`,
+            content: `确定要彻底删除课程"${courseToDelete?.name}"吗？此操作无法恢复！`,
             okText: '确定删除',
             cancelText: '取消',
             okButtonProps: { danger: true },
             onOk: async () => {
                 try {
                     await deleteCourse(selectedCourse);
-                    message.success('课程删除成功！');
+                    message.success('课程已彻底删除！所有相关数据已从数据库中移除');
                     setModalDeleteCourse(false);
                     setSelectedCourse('');
                     await getCourseList(); // 刷新课程列表
@@ -432,13 +432,18 @@ const ClassList = () => {
                             marginTop: '16px'
                         }}>
                             <p style={{ color: '#cf1322', margin: 0 }}>
-                                ⚠️ 警告：删除课程将会同时删除该课程下的所有相关数据，包括：
+                                ⚠️ 警告：这是硬删除操作！删除课程将会彻底从数据库中移除该课程下的所有相关数据，包括：
                             </p>
                             <ul style={{ color: '#cf1322', marginTop: '8px', marginBottom: 0 }}>
-                                <li>课程的所有班级信息</li>
-                                <li>课程的所有作业</li>
-                                <li>学生的相关成绩记录</li>
+                                <li>课程的所有课程计划</li>
+                                <li>课程的所有课时安排及教师分配</li>
+                                <li>课程的所有作业及学生提交记录</li>
+                                <li>相关的所有附件关系</li>
+                                <li>课程本身的记录</li>
                             </ul>
+                            <p style={{ color: '#cf1322', marginTop: '8px', marginBottom: 0, fontWeight: 'bold' }}>
+                                数据将无法恢复，请谨慎操作！
+                            </p>
                         </div>
                     )}
                 </Form>

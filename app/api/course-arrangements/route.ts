@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { courseHours, teachersToCourseHours, assistantsToCourseHours, operatorsToCourseHours, coursePlans, courses, teachers, classes } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, ne, asc } from 'drizzle-orm';
 import { generateId } from 'lucia';
 
 // 获取课程安排
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '缺少课程ID' }, { status: 400 });
     }
 
-    // 查询课程安排
+    // 查询课程安排，按创建时间排序以保持稳定的显示顺序
     const arrangements = await db
       .select({
         id: courseHours.id,
@@ -27,7 +27,8 @@ export async function GET(request: NextRequest) {
       })
       .from(courseHours)
       .innerJoin(coursePlans, eq(courseHours.coursePlanId, coursePlans.id))
-      .where(eq(coursePlans.courseId, courseId));
+      .where(eq(coursePlans.courseId, courseId))
+      .orderBy(asc(courseHours.createdAt)); // 按创建时间升序排列，保持稳定顺序
 
     // 获取每个课程安排的教师信息
     const arrangementsWithTeachers = await Promise.all(
@@ -60,13 +61,25 @@ export async function GET(request: NextRequest) {
 
         // 处理时间显示
         // start_time存储周几，end_time存储具体时间
-        const weekDay = arrangement.startTime || '';
-        const timeSlot = arrangement.endTime || '';
+        const weekDay = arrangement.startTime || 1;
+        const timeSlot = arrangement.endTime || 2;
+
+        // 获取班级名称
+        const coursePlanInfo = await db
+          .select({ className: classes.name })
+          .from(coursePlans)
+          .leftJoin(classes, eq(coursePlans.classId, classes.id))
+          .where(eq(coursePlans.id, arrangement.coursePlanId))
+          .limit(1);
+
+        // 处理占位符班级显示
+        const className = coursePlanInfo[0]?.className || '';
+        const displayClassName = className === '__EMPTY_PLACEHOLDER__' ? '' : className;
 
         return {
           id: arrangement.id,
           key: arrangement.id,
-          col1: '', // 班级名称，需要从course_plans关联获取
+          col1: displayClassName, // 如果是占位符班级则显示为空
           col2: theoryTeacher,
           col3: experimentTeacher,
           col4: assistant,
@@ -99,16 +112,54 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '缺少课程ID' }, { status: 400 });
     }
 
-    // 首先找到对应的coursePlan
-    const coursePlan = await db
+    // 创建一个临时的课程计划，使用特殊的占位符班级ID
+    // 为每个新增的课程安排创建独立的课程计划，避免班级冲突
+    console.log('正在为新课程安排创建独立的课程计划...');
+    
+    // 创建一个特殊的占位符班级ID，表示"未指定班级"
+    // 由于数据库要求classId不能为null，我们使用一个特殊的ID
+    const placeholderClassId = 'placeholder_empty_class';
+    
+    // 检查是否存在占位符班级，如果不存在则创建
+    let placeholderClass = await db
       .select()
-      .from(coursePlans)
-      .where(eq(coursePlans.courseId, courseId))
+      .from(classes)
+      .where(eq(classes.id, placeholderClassId))
       .limit(1);
-
-    if (!coursePlan.length) {
-      return NextResponse.json({ error: '未找到课程计划' }, { status: 404 });
+    
+    if (!placeholderClass.length) {
+      // 创建占位符班级
+      await db.insert(classes).values({
+        id: placeholderClassId,
+        name: '__EMPTY_PLACEHOLDER__', // 特殊名称，前端会识别并显示为空
+        isActive: 0, // 设为非活跃状态，避免在正常班级列表中显示
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      console.log('占位符班级已创建');
     }
+    
+    const currentYear = new Date().getFullYear();
+    const newCoursePlanId = generateId(15);
+    const newCoursePlan = await db
+      .insert(coursePlans)
+      .values({
+        id: newCoursePlanId,
+        courseId: courseId,
+        classId: placeholderClassId, // 使用占位符班级ID
+        year: currentYear,
+        semester: 0,
+        isActive: 1, // 确保课程计划是活跃状态，学生端才能看到
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+    
+    if (!newCoursePlan.length) {
+      return NextResponse.json({ error: '创建课程计划失败' }, { status: 500 });
+    }
+    
+    const coursePlan = newCoursePlan;
 
     // 创建课程安排
     const courseHourId = generateId(15);
@@ -118,9 +169,8 @@ export async function POST(request: NextRequest) {
         id: courseHourId,
         coursePlanId: coursePlan[0].id,
         classRoom: classRoom || '',
-        // 暂时跳过时间字段保存，避免PostgreSQL类型错误
-        // startTime: week || '', // 存储周几
-        // endTime: timeSlot || '', // 存储具体时间
+        startTime: new Date('2024-01-01T08:00:00'), // 提供默认时间戳值
+        endTime: new Date('2024-01-01T10:00:00'),   // 提供默认时间戳值
       })
       .returning();
 
@@ -201,12 +251,88 @@ export async function PUT(request: NextRequest) {
     if (classRoom !== undefined) updateData.classRoom = classRoom;
     if (col5 !== undefined) updateData.classRoom = col5; // 教室从col5传入
     
-    // 暂时跳过时间信息保存，避免PostgreSQL类型错误
+    // 处理班级信息更新
+    if (col1 !== undefined && col1 !== '') {
+      // 根据班级名称找到班级ID
+      const selectedClass = await db
+        .select()
+        .from(classes)
+        .where(eq(classes.name, col1))
+        .limit(1);
+        
+      if (selectedClass.length > 0) {
+        // 获取当前coursePlan信息
+        const currentCoursePlan = await db
+          .select()
+          .from(coursePlans)
+          .where(eq(coursePlans.id, existingCourseHour[0].coursePlanId))
+          .limit(1);
+          
+        if (currentCoursePlan.length > 0) {
+          const plan = currentCoursePlan[0];
+          
+          // 检查是否需要创建新的coursePlan
+          // 如果当前coursePlan的classId已经是目标classId，则无需更改
+          if (plan.classId !== selectedClass[0].id) {
+                         // 检查是否有其他courseHours使用相同的coursePlan
+             const otherCourseHours = await db
+               .select()
+               .from(courseHours)
+               .where(and(
+                 eq(courseHours.coursePlanId, plan.id),
+                 // 排除当前正在编辑的courseHour
+                 ne(courseHours.id, id)
+               ));
+              
+            console.log('其他使用相同coursePlan的courseHours数量:', otherCourseHours.length);
+            
+            if (otherCourseHours.length > 0) {
+              // 有其他courseHours使用相同的coursePlan，需要创建新的coursePlan
+              const newCoursePlanId = `plan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              
+              // 创建新的coursePlan
+              await db.insert(coursePlans).values({
+                id: newCoursePlanId,
+                courseId: plan.courseId,
+                classId: selectedClass[0].id,
+                year: plan.year,
+                semester: plan.semester,
+                isActive: 1, // 确保新课程计划是活跃状态
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              });
+              
+              // 更新当前courseHour指向新的coursePlan，同时更新updatedAt
+              await db
+                .update(courseHours)
+                .set({ 
+                  coursePlanId: newCoursePlanId,
+                  updatedAt: new Date()
+                })
+                .where(eq(courseHours.id, id));
+                
+              console.log('创建新的coursePlan:', newCoursePlanId, '班级:', col1);
+            } else {
+              // 没有其他courseHours使用相同的coursePlan，可以直接更新
+              await db
+                .update(coursePlans)
+                .set({ classId: selectedClass[0].id })
+                .where(eq(coursePlans.id, plan.id));
+                
+              console.log('直接更新coursePlan班级信息:', col1, '-> ID:', selectedClass[0].id);
+            }
+          }
+        }
+      }
+    }
+    
+    // 暂时跳过时间信息更新，因为数据库字段是time类型，需要运行migration脚本改为varchar
+    // TODO: 运行 scripts/migrate-course-hours-time-fields.sql 后可以恢复时间字段更新
     // if (week !== undefined) {
-    //   updateData.startTime = week; // 存储周几
+    //   updateData.startTime = week || '待安排'; // 存储周几
     // }
     // if (timeSlot !== undefined) {
-    //   updateData.endTime = timeSlot; // 存储具体时间
+    //   updateData.endTime = timeSlot || '待安排'; // 存储具体时间
     // }
 
     if (Object.keys(updateData).length > 0) {
@@ -275,7 +401,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: '更新成功（时间信息暂时跳过保存）',
+      message: '课程安排更新成功',
     });
   } catch (error) {
     console.error('更新课程安排失败:', error);

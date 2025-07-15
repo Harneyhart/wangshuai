@@ -26,7 +26,6 @@ interface Homework {
   className?: string;
   createdAt?: Date | string;
   deadline?: Date | string | null;
-  publishedClasses?: string; // 发布的班级ID列表，用逗号分隔
 }
 
 const Homework = () => {
@@ -400,14 +399,7 @@ const Homework = () => {
             dataIndex: 'publishInfo',
             width: 120,
             render: (text: string, record: Homework) => {
-                if (record.status === '已发布' && record.publishedClasses) {
-                    const classCount = record.publishedClasses.split(',').filter(id => id.trim()).length;
-                    return (
-                        <span style={{ color: '#52c41a', fontWeight: 500 }}>
-                            已发布至 {classCount} 个班级
-                        </span>
-                    );
-                } else if (record.status === '已发布') {
+                if (record.status === '已发布') {
                     return (
                         <span style={{ color: '#52c41a', fontWeight: 500 }}>
                             已发布
@@ -724,11 +716,12 @@ const Homework = () => {
                             description: values.description,
                             order: data.length + 1,
                             deadline: values.deadline ? values.deadline.toDate() : new Date(),
+                            isActive: 0, // 默认设置为未发布状态
                         };
                         
                         const res = await createHomework(homeworkData);
                         if (res) {
-                            message.success('作业模板创建成功，请点击"发布"按钮选择班级进行发布');
+                            message.success('作业模板创建成功！');
                             setIsModalVisible(false);
                             form.resetFields();
                             setSelectedCourseId(undefined);
@@ -838,7 +831,6 @@ const Homework = () => {
                                         order: data.length + 1,
                                         deadline: publishingHomework.deadline ? new Date(publishingHomework.deadline) : new Date(),
                                         isActive: 0,
-                                        publishedClasses: '', // 清空发布的班级信息
                                     };
                                     
                                     const res = await updateHomeworkById(homeworkData);
@@ -867,14 +859,12 @@ const Homework = () => {
                                     }
                                     
                                     try {
-                                        // 将选中的班级ID转换为字符串数组并保存
-                                        const publishedClassIds = selectedClassesForPublish.join(',');
                                         const selectedClassNames = selectedClassesForPublish
                                             .map(classId => allClasses.find(c => c.id === classId)?.name)
                                             .filter(Boolean)
                                             .join('、');
                                         
-                                        // 更新作业状态为已发布，并保存发布的班级信息
+                                        // 更新作业状态为已发布
                                         const homeworkData = {
                                             id: publishingHomework.key,
                                             coursePlanId: publishingHomework.coursePlanId || '',
@@ -883,12 +873,11 @@ const Homework = () => {
                                             order: data.length + 1,
                                             deadline: publishingHomework.deadline ? new Date(publishingHomework.deadline) : new Date(),
                                             isActive: 1, // 设置为已发布
-                                            publishedClasses: publishedClassIds, // 保存发布的班级ID列表
                                         };
                                         
                                         const res = await updateHomeworkById(homeworkData);
                                         if (res) {
-                                            message.success(`作业已成功发布到 ${selectedClassesForPublish.length} 个班级: ${selectedClassNames}`);
+                                            message.success(`作业已成功发布，学生可通过课程计划查看`);
                                             setPublishModalVisible(false);
                                             setSelectedClassesForPublish([]);
                                             
@@ -922,19 +911,8 @@ const Homework = () => {
                 {publishingHomework && (
                     <div>
                         <div style={{ marginBottom: '16px' }}>
-                            <p><b>作业名称：</b>{publishingHomework.homework}</p>
+                                                        <p><b>作业名称：</b>{publishingHomework.homework}</p>
                             <p><b>课程名称：</b>{publishingHomework.courseName || '未知课程'}</p>
-                            {publishingHomework.status === '已发布' && publishingHomework.publishedClasses && (
-                                <p><b>已发布班级：</b>
-                                    {publishingHomework.publishedClasses.split(',').map(classId => {
-                                        const classItem = allClasses.find(c => c.id === classId.trim());
-                                        return classItem?.name;
-                                    }).filter(Boolean).join('、') || '未知班级'}
-                                    <span style={{ color: '#666', marginLeft: 8 }}>
-                                        (共 {publishingHomework.publishedClasses.split(',').filter(id => id.trim()).length} 个班级)
-                                    </span>
-                                </p>
-                            )}
                             <p><b>作业描述：</b>{publishingHomework.description}</p>
                             <p><b>创建时间：</b>{publishingHomework.createdAt ? dayjs(publishingHomework.createdAt).format('YYYY-MM-DD HH:mm:ss') : '未设置'}</p>
                             <p><b>截止时间：</b>{publishingHomework.deadline ? dayjs(publishingHomework.deadline).format('YYYY-MM-DD HH:mm:ss') : '未设置'}</p>
