@@ -1,0 +1,95 @@
+name: CD for Prod
+on:
+  # workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Replace env
+        uses: skiddph/actions-env@v1.0.2
+        with:
+          file: .env.production.local
+          prefix: 'ENV_'
+        env:
+          ENV_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENV_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Check env file
+        run: cat .env.production.local
+
+      - name: Setup nodejs
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Cache dependencies
+        id: cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ github.workspace }}/node_modules
+            ${{ github.workspace }}/temp/cache
+          # Generate a new cache whenever packages or source files change.
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**.[jt]sx?') }}
+          # If source files changed but packages didn't, rebuild from a prior cache.
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+
+      - name: Install dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: BUILD_DIR=temp NODE_ENV=production pnpm run build
+
+      - name: Package files
+        run: |
+          tar -czf artifact.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='coverage' \
+            --exclude='*.log' \
+            temp/ public/ scripts/ lib/ \
+            ecosystem.config.js package.json pnpm-lock.yaml \
+            .env.production.local tsconfig.json .nvmrc next.config.mjs \
+            drizzle.config.ts
+
+      - name: Upload next
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.HOST_USERNAME }}
+          port: 22
+          key: ${{ secrets.HOST_PRIVATE_KEY }}
+          source: 'artifact.tar.gz'
+          target: '~/workspaces/schwann'
+
+      - name: Deploy using ssh
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.HOST_USERNAME }}
+          key: ${{ secrets.HOST_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd ~/workspaces/schwann
+            tar -xzf artifact.tar.gz
+            rm artifact.tar.gz
+            export NVM_DIR=~/.nvm
+            source ~/.nvm/nvm.sh
+            nvm use
+            bash ./scripts/deploy-with-cd.sh prod
