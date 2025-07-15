@@ -118,8 +118,9 @@ export async function POST(request: NextRequest) {
         id: courseHourId,
         coursePlanId: coursePlan[0].id,
         classRoom: classRoom || '',
-        startTime: week || '', // 存储周几
-        endTime: timeSlot || '', // 存储具体时间
+        // 暂时跳过时间字段保存，避免PostgreSQL类型错误
+        // startTime: week || '', // 存储周几
+        // endTime: timeSlot || '', // 存储具体时间
       })
       .returning();
 
@@ -175,8 +176,23 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
     const { id, courseId, classRoom, week, timeSlot, teacherIds, col1, col2, col3, col4, col5, col6 } = body;
 
+    console.log('收到更新请求，ID:', id, '类型:', typeof id);
+    console.log('完整请求数据:', body);
+
     if (!id) {
       return NextResponse.json({ error: '缺少课程安排ID' }, { status: 400 });
+    }
+
+    // 验证课程安排是否存在
+    const existingCourseHour = await db
+      .select()
+      .from(courseHours)
+      .where(eq(courseHours.id, id))
+      .limit(1);
+
+    if (!existingCourseHour.length) {
+      console.error('课程安排不存在，ID:', id);
+      return NextResponse.json({ error: `课程安排不存在，ID: ${id}` }, { status: 404 });
     }
 
     // 更新课程安排基本信息
@@ -185,13 +201,13 @@ export async function PUT(request: NextRequest) {
     if (classRoom !== undefined) updateData.classRoom = classRoom;
     if (col5 !== undefined) updateData.classRoom = col5; // 教室从col5传入
     
-    // 处理时间信息
-    if (week !== undefined) {
-      updateData.startTime = week; // 存储周几
-    }
-    if (timeSlot !== undefined) {
-      updateData.endTime = timeSlot; // 存储具体时间
-    }
+    // 暂时跳过时间信息保存，避免PostgreSQL类型错误
+    // if (week !== undefined) {
+    //   updateData.startTime = week; // 存储周几
+    // }
+    // if (timeSlot !== undefined) {
+    //   updateData.endTime = timeSlot; // 存储具体时间
+    // }
 
     if (Object.keys(updateData).length > 0) {
       updateData.updatedAt = new Date();
@@ -210,9 +226,13 @@ export async function PUT(request: NextRequest) {
 
     // 重新创建教师关联
     if (teacherIds) {
+      console.log('开始创建教师关联，courseHourId:', id);
+      console.log('教师IDs:', teacherIds);
+      
       const promises = [];
       
       if (teacherIds.theory) {
+        console.log('添加理论教师关联:', teacherIds.theory);
         promises.push(
           db.insert(teachersToCourseHours).values({
             teacherId: teacherIds.theory,
@@ -222,6 +242,7 @@ export async function PUT(request: NextRequest) {
       }
       
       if (teacherIds.experiment) {
+        console.log('添加实验教师关联:', teacherIds.experiment);
         promises.push(
           db.insert(operatorsToCourseHours).values({
             operatorId: teacherIds.experiment,
@@ -231,6 +252,7 @@ export async function PUT(request: NextRequest) {
       }
 
       if (teacherIds.assistant) {
+        console.log('添加助教关联:', teacherIds.assistant);
         promises.push(
           db.insert(assistantsToCourseHours).values({
             assistantId: teacherIds.assistant,
@@ -240,13 +262,20 @@ export async function PUT(request: NextRequest) {
       }
 
       if (promises.length > 0) {
-        await Promise.all(promises);
+        console.log('执行', promises.length, '个教师关联插入操作');
+        try {
+          await Promise.all(promises);
+          console.log('教师关联创建成功');
+        } catch (error) {
+          console.error('创建教师关联失败:', error);
+          throw error; // 重新抛出错误以便外层捕获
+        }
       }
     }
 
     return NextResponse.json({
       success: true,
-      message: '更新成功',
+      message: '更新成功（时间信息暂时跳过保存）',
     });
   } catch (error) {
     console.error('更新课程安排失败:', error);

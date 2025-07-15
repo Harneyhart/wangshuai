@@ -1,0 +1,1 @@
+ALTER TABLE "submissions" ADD COLUMN "is_active" smallint DEFAULT 1;

@@ -1,0 +1,1 @@
+ALTER TABLE "submissions" ALTER COLUMN "text" SET DATA TYPE varchar(10000000);
