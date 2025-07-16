@@ -930,6 +930,11 @@ export async function getHomeworksForTeacher() {
           with: {
             class: true,
             course: true,
+            attachments: {
+              with: {
+                attachment: true,
+              },
+            },
           },
         },
       },
@@ -946,6 +951,12 @@ export async function getHomeworksForTeacher() {
       className: h.plan?.class?.name || '未知班级',
       createdAt: h.createdAt,
       deadline: h.deadline,
+      attachments: h.plan?.attachments?.map(att => ({
+        id: att.attachment.id,
+        name: att.attachment.name,
+        fileName: att.attachment.fileName,
+        fileKey: att.attachment.fileKey,
+      })) || [],
     }));
   } catch (error) {
     console.error('获取作业数据失败:', error);
@@ -976,15 +987,19 @@ export async function getHomeworksForStudent() {
 
     const studentClassIds = studentInfo.map(s => s.classId);
 
-    // 2. 获取这些班级的课程计划
-    const coursePlans = await db
-      .select({
-        id: schema.coursePlans.id,
-        classId: schema.coursePlans.classId,
-        courseId: schema.coursePlans.courseId,
-      })
-      .from(schema.coursePlans)
-      .where(inArray(schema.coursePlans.classId, studentClassIds));
+    // 2. 获取这些班级的课程计划及其附件
+    const coursePlans = await db.query.coursePlans.findMany({
+      where: (table, { inArray }) => inArray(table.classId, studentClassIds),
+      with: {
+        course: true,
+        class: true,
+        attachments: {
+          with: {
+            attachment: true,
+          },
+        },
+      },
+    });
 
     const coursePlanIds = coursePlans.map(p => p.id);
 
@@ -992,8 +1007,7 @@ export async function getHomeworksForStudent() {
       return []; // 学生所在班级没有课程计划，返回空数组
     }
 
-            // 3. 获取学生班级的已发布作业 (isActive = 1)
-    // 查询条件：作业已发布 AND 作业的coursePlan在学生班级的coursePlan列表中
+    // 3. 获取学生班级的已发布作业 (isActive = 1)
     const homeworkData = await db
       .select({
         id: schema.homeworks.id,
@@ -1010,40 +1024,25 @@ export async function getHomeworksForStudent() {
       ))
       .orderBy(desc(schema.homeworks.createdAt));
 
-    // 4. 获取班级和课程信息
-    const classIds = Array.from(new Set(coursePlans.map(p => p.classId).filter(Boolean)));
-    const courseIds = Array.from(new Set(coursePlans.map(p => p.courseId).filter(Boolean)));
-
-    const classes = classIds.length > 0 ? await db
-      .select({
-        id: schema.classes.id,
-        name: schema.classes.name,
-      })
-      .from(schema.classes)
-      .where(inArray(schema.classes.id, classIds)) : [];
-
-    const courses = courseIds.length > 0 ? await db
-      .select({
-        id: schema.courses.id,
-        name: schema.courses.name,
-      })
-      .from(schema.courses)
-      .where(inArray(schema.courses.id, courseIds)) : [];
-
     return homeworkData.map((h) => {
       const coursePlan = coursePlans.find(p => p.id === h.coursePlanId);
-      const classInfo = classes.find(c => c.id === coursePlan?.classId);
-      const courseInfo = courses.find(c => c.id === coursePlan?.courseId);
       
       return {
         key: h.id,
         homework: h.name,
         description: h.description,
-        courseName: courseInfo?.name || '未知课程',
-        className: classInfo?.name || '未知班级',
+        courseName: coursePlan?.course?.name || '未知课程',
+        className: coursePlan?.class?.name || '未知班级',
         publishTime: h.createdAt,
         deadline: h.deadline,
         status: '已发布',
+        coursePlanId: h.coursePlanId,
+        attachments: coursePlan?.attachments?.map(att => ({
+          id: att.attachment.id,
+          name: att.attachment.name,
+          fileName: att.attachment.fileName,
+          fileKey: att.attachment.fileKey,
+        })) || [],
       };
     });
   } catch (error) {

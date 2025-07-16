@@ -41,6 +41,12 @@ interface Homework {
   className?: string;
   createdAt?: Date | string;
   deadline?: Date | string | null;
+  attachments?: Array<{
+    id: string;
+    name: string;
+    fileName: string;
+    fileKey: string;
+  }>;
 }
 
 const HomeworkDetail = () => {

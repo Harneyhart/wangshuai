@@ -187,15 +187,7 @@ const Homework = () => {
             width: 200,
             align: 'center' as const,
             render: (courseName: string) => (
-                <div style={{
-                    height: 48,
-                    lineHeight: '48px',
-                    overflow: 'hidden',
-                    whiteSpace: 'nowrap',
-                    textOverflow: 'ellipsis',
-                    color: '#1890ff',
-                    fontWeight: 500
-                }}>
+                <div>
                     {courseName}
                 </div>
             )
@@ -206,15 +198,7 @@ const Homework = () => {
             width: 300,
             ellipsis: true,
             render: (name: string) => (
-                <div style={{
-                    maxHeight: 48,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    fontWeight: 500
-                }}>
+                <div>
                     {name}
                 </div>
             )

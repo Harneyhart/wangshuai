@@ -309,11 +309,14 @@ const HomeWork = () => {
             key: 'homework',
             width: 150,
             align: 'center',
-            render: (text: string) => {
+            render: (text: string, record: any) => {
+                const hasAttachments = record.attachments && record.attachments.length > 0;
+                
+                let content: React.ReactNode = text;
                 if (isSearching && searchText && text) {
                     // 高亮搜索关键词
                     const parts = text.split(new RegExp(`(${searchText})`, 'gi'));
-                    return (
+                    content = (
                         <span>
                             {parts.map((part, index) => 
                                 part.toLowerCase() === searchText.toLowerCase() ? (
@@ -325,7 +328,19 @@ const HomeWork = () => {
                         </span>
                     );
                 }
-                return text;
+                
+                return (
+                    <div>
+                        {content}
+                        {hasAttachments && (
+                            <div style={{ marginTop: '4px' }}>
+                                <Tag color="blue" style={{ fontSize: '11px' }}>
+                                    📎 有附件 ({record.attachments.length})
+                                </Tag>
+                            </div>
+                        )}
+                    </div>
+                );
             },
         },
         {
@@ -607,7 +622,59 @@ const HomeWork = () => {
                                     {selectedHomework.className}
                                 </Descriptions.Item>
                                 <Descriptions.Item label="作业描述">
-                                    {selectedHomework.description || '暂无描述'}
+                                    <div>
+                                        <div style={{ marginBottom: '8px' }}>
+                                            {selectedHomework.description || '暂无描述'}
+                                        </div>
+                                        {selectedHomework.attachments && selectedHomework.attachments.length > 0 && (
+                                            <div>
+                                                <Divider style={{ margin: '8px 0' }}>作业附件</Divider>
+                                                <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                                                    {selectedHomework.attachments.map((attachment: any, index: number) => (
+                                                        <div key={index} style={{ 
+                                                            padding: '8px 12px', 
+                                                            border: '1px solid #d9d9d9', 
+                                                            borderRadius: '6px', 
+                                                            marginBottom: '8px',
+                                                            display: 'flex',
+                                                            justifyContent: 'space-between',
+                                                            alignItems: 'center',
+                                                            backgroundColor: '#f9f9f9'
+                                                        }}>
+                                                            <div>
+                                                                <div style={{ fontWeight: 500, color: '#1890ff' }}>
+                                                                    📎 {attachment.name}
+                                                                </div>
+                                                                <div style={{ fontSize: '12px', color: '#666' }}>
+                                                                    {attachment.fileName}
+                                                                </div>
+                                                            </div>
+                                                            <Space>
+                                                                <Button 
+                                                                    size="small" 
+                                                                    type="primary"
+                                                                    onClick={() => window.open(`/api/attachment/view?key=${attachment.fileKey}`, '_blank')}
+                                                                >
+                                                                    预览
+                                                                </Button>
+                                                                <Button 
+                                                                    size="small"
+                                                                    onClick={() => {
+                                                                        const link = document.createElement('a');
+                                                                        link.href = `/api/attachment/view?key=${attachment.fileKey}&download=1`;
+                                                                        link.download = attachment.fileName;
+                                                                        link.click();
+                                                                    }}
+                                                                >
+                                                                    下载
+                                                                </Button>
+                                                            </Space>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </Descriptions.Item>
                                 <Descriptions.Item label="发布时间">
                                     {selectedHomework.publishTime ? new Date(selectedHomework.publishTime).toLocaleString() : '-'}

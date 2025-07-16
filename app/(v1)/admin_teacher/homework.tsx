@@ -12,7 +12,6 @@ import { getAllStudents, getAllCourses,getAllClasses, createClass, deleteClass, 
 import { UserItem, StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
 import { formConfig, renderFileViewLink } from '@/utils/utils';
 import { parseUploadFileToUpsertUploadFile } from '@/utils/utils';
-import Link from 'next/link';
 
 const { Option } = Select;
 
@@ -26,6 +25,12 @@ interface Homework {
   className?: string;
   createdAt?: Date | string;
   deadline?: Date | string | null;
+  attachments?: Array<{
+    id: string;
+    name: string;
+    fileName: string;
+    fileKey: string;
+  }>;
 }
 
 const Homework = () => {
@@ -54,7 +59,14 @@ const Homework = () => {
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [form] = Form.useForm();
 
-    // 移除了浏览和编辑弹窗相关状态，改为跳转到新页面
+    // 编辑作业相关状态
+    const [editModalVisible, setEditModalVisible] = useState(false);
+    const [editingHomework, setEditingHomework] = useState<Homework | null>(null);
+    const [editForm] = Form.useForm();
+    const [editUploadFiles, setEditUploadFiles] = useState<UploadFile[]>([]);
+
+    // 新增作业上传文件状态
+    const [uploadFiles, setUploadFiles] = useState<UploadFile[]>([]);
 
     // 发布弹窗相关状态
     const [publishModalVisible, setPublishModalVisible] = useState(false);
@@ -127,7 +139,8 @@ const Homework = () => {
     const [selectedCourseId, setSelectedCourseId] = useState<string>();
     
     // 搜索相关状态
-    const [searchText, setSearchText] = useState('');
+    const [courseSearchText, setCourseSearchText] = useState('');
+    const [homeworkSearchText, setHomeworkSearchText] = useState('');
     const [isSearching, setIsSearching] = useState(false);
     const [filteredHomeworkList, setFilteredHomeworkList] = useState<Homework[]>([]);
 
@@ -139,27 +152,24 @@ const Homework = () => {
 
     // 根据搜索内容判断筛选类型
     const getFilterType = () => {
-        if (!isSearching || !searchText) return 'all';
+        if (!isSearching || (!courseSearchText && !homeworkSearchText)) return 'all';
 
         const currentList = getCurrentHomeworkList();
         if (currentList.length === 0) return 'empty';
 
-        // 如果筛选结果中都是同一个课程，认为是按课程筛选
-        const uniqueCourses = Array.from(new Set(currentList.map(item => item.courseName).filter(Boolean)));
-        if (uniqueCourses.length === 1 && uniqueCourses[0]) {
+        // 如果只搜索了课程名称
+        if (courseSearchText && !homeworkSearchText) {
             return 'course';
         }
 
-        // 如果搜索词包含状态关键词
-        const statusKeywords = ['已发布', '未发布', '发布'];
-        if (statusKeywords.some(keyword => searchText.includes(keyword))) {
-            return 'status';
+        // 如果只搜索了作业名称
+        if (!courseSearchText && homeworkSearchText) {
+            return 'homework';
         }
 
-        // 如果搜索词包含时间关键词
-        const timeKeywords = ['今天', '昨天', '本周', '本月'];
-        if (timeKeywords.some(keyword => searchText.includes(keyword))) {
-            return 'time';
+        // 如果同时搜索了课程和作业
+        if (courseSearchText && homeworkSearchText) {
+            return 'combined';
         }
 
         return 'content';
@@ -176,12 +186,11 @@ const Homework = () => {
             case 'empty':
                 return '未找到匹配的作业';
             case 'course':
-                const courseName = currentList[0]?.courseName;
-                return `课程筛选: ${courseName}`;
-            case 'status':
-                return '状态筛选';
-            case 'time':
-                return '时间筛选';
+                return `课程筛选: ${courseSearchText}`;
+            case 'homework':
+                return `作业筛选: ${homeworkSearchText}`;
+            case 'combined':
+                return `组合搜索: 课程"${courseSearchText}" + 作业"${homeworkSearchText}"`;
             case 'content':
                 return '内容搜索';
             default:
@@ -203,46 +212,30 @@ const Homework = () => {
 
     // 处理搜索
     const handleSearch = () => {
-        if (!searchText.trim()) {
+        if (!courseSearchText.trim() && !homeworkSearchText.trim()) {
             message.warning('请输入搜索关键词');
             return;
         }
         
-        const searchTerm = searchText.toLowerCase().trim();
+        const courseSearchTerm = courseSearchText.toLowerCase().trim();
+        const homeworkSearchTerm = homeworkSearchText.toLowerCase().trim();
+        
         const filtered = data.filter(homework => {
-            // 作业名称搜索
-            const homeworkNameMatch = homework.homework?.toLowerCase().includes(searchTerm);
+            let courseMatch = true;
+            let homeworkMatch = true;
             
-            // 课程名称搜索
-            const courseNameMatch = homework.courseName?.toLowerCase().includes(searchTerm);
-            
-            // 移除班级名称搜索功能
-            
-            // 作业描述搜索
-            const descriptionMatch = homework.description?.toLowerCase().includes(searchTerm);
-            
-            // 状态搜索
-            const statusMatch = homework.status?.toLowerCase().includes(searchTerm);
-            
-            // 时间相关搜索
-            let timeMatch = false;
-            if (homework.createdAt) {
-                const createdDate = dayjs(homework.createdAt);
-                const now = dayjs();
-                
-                if (searchTerm.includes('今天')) {
-                    timeMatch = createdDate.isSame(now, 'day');
-                } else if (searchTerm.includes('昨天')) {
-                    timeMatch = createdDate.isSame(now.subtract(1, 'day'), 'day');
-                } else if (searchTerm.includes('本周')) {
-                    timeMatch = createdDate.isSame(now, 'week');
-                } else if (searchTerm.includes('本月')) {
-                    timeMatch = createdDate.isSame(now, 'month');
-                }
+            // 如果有课程搜索条件，检查课程名称匹配
+            if (courseSearchTerm) {
+                courseMatch = homework.courseName?.toLowerCase().includes(courseSearchTerm) || false;
             }
             
-            return homeworkNameMatch || courseNameMatch || 
-                   descriptionMatch || statusMatch || timeMatch;
+            // 如果有作业搜索条件，检查作业名称匹配
+            if (homeworkSearchTerm) {
+                homeworkMatch = homework.homework?.toLowerCase().includes(homeworkSearchTerm) || false;
+            }
+            
+            // 两个条件都必须满足（AND逻辑）
+            return courseMatch && homeworkMatch;
         });
         
         setFilteredHomeworkList(filtered);
@@ -251,41 +244,22 @@ const Homework = () => {
         if (filtered.length === 0) {
             message.info('未找到匹配的作业');
         } else {
-            // 先手动分析筛选类型，因为此时filteredHomeworkList还未更新
-            let filterType = 'content';
-            let specificInfo = '';
-            
-            // 检查是否为课程筛选
-            const uniqueCourses = Array.from(new Set(filtered.map(item => item.courseName).filter(Boolean)));
-            if (uniqueCourses.length === 1 && uniqueCourses[0]) {
-                filterType = 'course';
-                specificInfo = ` (来自课程: ${uniqueCourses[0]})`;
+            let successMessage = '';
+            if (courseSearchTerm && homeworkSearchTerm) {
+                successMessage = `找到 ${filtered.length} 个匹配的作业 (课程: "${courseSearchText}" 且 作业: "${homeworkSearchText}")`;
+            } else if (courseSearchTerm) {
+                successMessage = `找到 ${filtered.length} 个匹配的作业 (课程: "${courseSearchText}")`;
+            } else if (homeworkSearchTerm) {
+                successMessage = `找到 ${filtered.length} 个匹配的作业 (作业: "${homeworkSearchText}")`;
             }
-            // 检查是否为状态筛选
-            else {
-                const statusKeywords = ['已发布', '未发布', '发布'];
-                if (statusKeywords.some(keyword => searchTerm.includes(keyword))) {
-                    filterType = 'status';
-                    specificInfo = ' (状态筛选)';
-                }
-                // 检查是否为时间筛选
-                else {
-                    const timeKeywords = ['今天', '昨天', '本周', '本月'];
-                    if (timeKeywords.some(keyword => searchTerm.includes(keyword))) {
-                        filterType = 'time';
-                        specificInfo = ' (时间筛选)';
-                    }
-                }
-            }
-            
-            let successMessage = `找到 ${filtered.length} 个匹配的作业${specificInfo}`;
             message.success(successMessage);
         }
     };
 
     // 清空搜索
     const handleClearSearch = () => {
-        setSearchText('');
+        setCourseSearchText('');
+        setHomeworkSearchText('');
         setFilteredHomeworkList(data);
         setIsSearching(false);
         message.success('已清空搜索条件');
@@ -304,6 +278,7 @@ const Homework = () => {
                     ...item,
                     createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
                     deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
+                    attachments: item.attachments || [],
                 })));
             } else if (result.error) {
                 message.error(result.error);
@@ -391,27 +366,29 @@ const Homework = () => {
             dataIndex: 'courseName',
             width: 120,
             render: (text: string, record: Homework) => {
-                return record.courseName || '未知课程';
-            },
-        },
-        {
-            title: '发布状态',
-            dataIndex: 'publishInfo',
-            width: 120,
-            render: (text: string, record: Homework) => {
-                if (record.status === '已发布') {
+                const courseName = record.courseName || '未知课程';
+                if (isSearching && courseSearchText && courseName !== '未知课程') {
+                    // 高亮课程搜索关键词
+                    const parts = courseName.split(new RegExp(`(${courseSearchText})`, 'gi'));
                     return (
-                        <span style={{ color: '#52c41a', fontWeight: 500 }}>
-                            已发布
-                        </span>
-                    );
-                } else {
-                    return (
-                        <span style={{ color: '#666' }}>
-                            未发布
+                        <span style={{ fontWeight: 500 }} title={courseName}>
+                            {parts.map((part, index) => 
+                                part.toLowerCase() === courseSearchText.toLowerCase() ? (
+                                    <span key={index} style={{ 
+                                        backgroundColor: '#e6f7ff', 
+                                        color: '#1890ff',
+                                        padding: '2px 4px',
+                                        borderRadius: '3px',
+                                        fontWeight: 600
+                                    }}>
+                                        {part}
+                                    </span>
+                                ) : part
+                            )}
                         </span>
                     );
                 }
+                return courseName;
             },
         },
         {
@@ -419,16 +396,16 @@ const Homework = () => {
             dataIndex: 'homework',
             width: 150,
             render: (text: string) => {
-                if (isSearching && searchText && text) {
-                    // 高亮搜索关键词
-                    const parts = text.split(new RegExp(`(${searchText})`, 'gi'));
+                if (isSearching && homeworkSearchText && text) {
+                    // 高亮作业搜索关键词
+                    const parts = text.split(new RegExp(`(${homeworkSearchText})`, 'gi'));
                     return (
                         <span style={{ fontWeight: 500 }} title={text}>
                             {parts.map((part, index) => 
-                                part.toLowerCase() === searchText.toLowerCase() ? (
+                                part.toLowerCase() === homeworkSearchText.toLowerCase() ? (
                                     <span key={index} style={{ 
-                                        backgroundColor: '#fff2f0', 
-                                        color: '#cf1322',
+                                        backgroundColor: '#f0ffff', 
+                                        color: '#13c2c2',
                                         padding: '2px 4px',
                                         borderRadius: '3px',
                                         fontWeight: 600
@@ -450,12 +427,72 @@ const Homework = () => {
         {
             title: <span style={{ fontWeight: 600 }}>作业描述</span>,
             dataIndex: 'description',
-            width: 200,
+            width: 250,
             ellipsis: true,
-            render: (text: string) => (
-                <span style={{ color: '#666' }} title={text || '暂无描述'}>
-                    {text || '暂无描述'}
-                </span>
+            render: (text: string, record: Homework) => (
+                <div>
+                    <div style={{ color: '#666', marginBottom: '4px' }} title={text || '暂无描述'}>
+                        {text || '暂无描述'}
+                    </div>
+                    {record.attachments && record.attachments.length > 0 && (
+                        <Button 
+                            type="link" 
+                            size="small" 
+                            style={{ padding: 0, height: 'auto', color: '#1890ff' }}
+                            onClick={() => {
+                                // 显示附件列表模态框
+                                Modal.info({
+                                    title: `${record.homework} - 作业附件`,
+                                    width: 600,
+                                    content: (
+                                        <div style={{ marginTop: '16px' }}>
+                                            {record.attachments!.map((attachment, index) => (
+                                                <div key={index} style={{ 
+                                                    padding: '8px 12px', 
+                                                    border: '1px solid #d9d9d9', 
+                                                    borderRadius: '6px', 
+                                                    marginBottom: '8px',
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center'
+                                                }}>
+                                                    <div>
+                                                        <div style={{ fontWeight: 500 }}>{attachment.name}</div>
+                                                        <div style={{ fontSize: '12px', color: '#666' }}>
+                                                            {attachment.fileName}
+                                                        </div>
+                                                    </div>
+                                                    <Space>
+                                                        <Button 
+                                                            size="small" 
+                                                            type="primary"
+                                                            onClick={() => window.open(`/api/attachment/view?key=${attachment.fileKey}`, '_blank')}
+                                                        >
+                                                            预览
+                                                        </Button>
+                                                        <Button 
+                                                            size="small"
+                                                            onClick={() => {
+                                                                const link = document.createElement('a');
+                                                                link.href = `/api/attachment/view?key=${attachment.fileKey}&download=1`;
+                                                                link.download = attachment.fileName;
+                                                                link.click();
+                                                            }}
+                                                        >
+                                                            下载
+                                                        </Button>
+                                                    </Space>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ),
+                                });
+                            }}
+                        >
+                            📎 查看附件 ({record.attachments.length})
+                        </Button>
+                    )}
+                </div>
             ),
         },
         {
@@ -501,18 +538,27 @@ const Homework = () => {
         {
             title: <span style={{ fontWeight: 600 }}>操作</span>,
             dataIndex: 'action',
-            width: 260,
+            width: 240,
             align: 'center' as const,
             render: (_: any, record: Homework) => (
                 <Space size="small">
-                    <Link href={`/admin_teacher/homework-detail/${record.key}`}>
-                        <Button 
-                            type="link" 
-                            size="small"
-                        >
-                            编辑作业
-                        </Button>
-                    </Link>
+                    <Button 
+                        type="link" 
+                        size="small"
+                        style={{ color: '#1890ff' }}
+                        onClick={() => { 
+                            setEditingHomework(record);
+                            editForm.setFieldsValue({
+                                homework: record.homework,
+                                description: record.description,
+                                deadline: record.deadline ? dayjs(record.deadline) : null,
+                            });
+                            setEditUploadFiles([]);
+                            setEditModalVisible(true);
+                        }}
+                    >
+                        编辑
+                    </Button>
                     <Button 
                         type="link" 
                         size="small"
@@ -584,11 +630,22 @@ const Homework = () => {
                 width: '100%'
             }}>
                 <Row gutter={[16, 16]} align="middle">
-                    <Col xs={24} sm={12} md={10} lg={8} xl={6}>
+                    <Col xs={24} sm={12} md={8} lg={6} xl={5}>
                         <Input 
-                            placeholder="搜索作业名称、课程、状态..."
-                            value={searchText}
-                            onChange={(e) => setSearchText(e.target.value)}
+                            placeholder="搜索课程名称..."
+                            value={courseSearchText}
+                            onChange={(e) => setCourseSearchText(e.target.value)}
+                            onPressEnter={handleSearch}
+                            allowClear
+                            style={{ width: '100%' }}
+                            size="large"
+                        />
+                    </Col>
+                    <Col xs={24} sm={12} md={8} lg={6} xl={5}>
+                        <Input 
+                            placeholder="搜索作业名称..."
+                            value={homeworkSearchText}
+                            onChange={(e) => setHomeworkSearchText(e.target.value)}
                             onPressEnter={handleSearch}
                             allowClear
                             style={{ width: '100%' }}
@@ -600,7 +657,7 @@ const Homework = () => {
                             <Button 
                                 type="primary" 
                                 onClick={handleSearch} 
-                                disabled={!searchText.trim()}
+                                disabled={!courseSearchText.trim() && !homeworkSearchText.trim()}
                                 size="large"
                             >
                                 搜索
@@ -614,13 +671,20 @@ const Homework = () => {
                             </Button>
                         </Space>
                     </Col>
-                    <Col xs={24} sm={24} md={6} lg={10} xl={14}>
+                    <Col xs={24} sm={24} md={6} lg={10} xl={10}>
                         {isSearching && (
                             <div style={{ textAlign: 'right', paddingRight: '20px' }}>
-                                <Space>
-                                    <Tag color="blue" style={{ fontSize: '14px', padding: '4px 8px' }}>
-                                        搜索: "{searchText}"
-                                    </Tag>
+                                <Space wrap>
+                                    {courseSearchText && (
+                                        <Tag color="blue" style={{ fontSize: '14px', padding: '4px 8px' }}>
+                                            课程: "{courseSearchText}"
+                                        </Tag>
+                                    )}
+                                    {homeworkSearchText && (
+                                        <Tag color="cyan" style={{ fontSize: '14px', padding: '4px 8px' }}>
+                                            作业: "{homeworkSearchText}"
+                                        </Tag>
+                                    )}
                                     <Tag 
                                         color={getFilterType() === 'empty' ? 'red' : 'green'} 
                                         style={{ fontSize: '14px', padding: '4px 8px' }}
@@ -637,7 +701,7 @@ const Homework = () => {
                     <Row style={{ marginTop: '8px' }}>
                         <Col span={24}>
                             <Typography.Text type="secondary" style={{ fontSize: '12px' }}>
-                                💡 搜索提示：支持搜索作业名称、课程名称、作业描述、发布状态 (已发布/未发布)，以及时间关键词 (今天/昨天/本周/本月)
+                                💡 搜索提示：左侧搜索框仅搜索课程名称，右侧搜索框仅搜索作业名称。可以单独使用或组合使用两个搜索框进行精确筛选。
                             </Typography.Text>
                         </Col>
                     </Row>
@@ -669,7 +733,7 @@ const Homework = () => {
                 loading={loading}
                 bordered
                 size="middle"
-                scroll={{ x: 1400 }}
+                scroll={{ x: 1500 }}
                 style={{
                     backgroundColor: '#fff',
                     borderRadius: '8px',
@@ -685,6 +749,7 @@ const Homework = () => {
                 onCancel={() => {
                     setIsModalVisible(false);
                     form.resetFields();
+                    setUploadFiles([]);
                 }}
                 footer={null}
             >
@@ -720,10 +785,55 @@ const Homework = () => {
                         };
                         
                         const res = await createHomework(homeworkData);
-                        if (res) {
+                        if (res && res.length > 0) {
+                            // 如果有上传文件，创建附件
+                            if (uploadFiles.length > 0) {
+                                try {
+                                    for (const file of uploadFiles) {
+                                        const formData = new FormData();
+                                        formData.append('file', file.originFileObj as File);
+                                        
+                                                                                // 上传文件
+                                        const uploadResponse = await fetch('/api/upload', {
+                                            method: 'POST',
+                                            body: formData,
+                                        });
+                                        
+                                        if (uploadResponse.ok) {
+                                            const uploadResult = await uploadResponse.json();
+                                            console.log('文件上传结果:', uploadResult);
+                                            
+                                            if (uploadResult.status === 'success' && uploadResult.data) {
+                                                // 创建附件记录，关联到课程计划
+                                                const attachmentData = {
+                                                    name: file.name,
+                                                    coursePlanId: selectedCoursePlans[0].id, // 关联到课程计划
+                                                    attachments: [{
+                                                        name: file.name,
+                                                        fileName: uploadResult.data.fileName,
+                                                        fileKey: uploadResult.data.fileKey,
+                                                    }],
+                                                };
+                                                
+                                                await createAttachment(attachmentData);
+                                            } else {
+                                                console.error('文件上传失败:', uploadResult.error);
+                                                throw new Error(`文件 ${file.name} 上传失败`);
+                                            }
+                                        } else {
+                                            throw new Error(`文件 ${file.name} 上传请求失败`);
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error('附件上传失败:', error);
+                                    message.warning('作业创建成功，但部分附件上传失败，请稍后重新上传');
+                                }
+                            }
+                            
                             message.success('作业模板创建成功！');
                             setIsModalVisible(false);
                             form.resetFields();
+                            setUploadFiles([]);
                             setSelectedCourseId(undefined);
                             // 重新拉取作业列表
                             const result = await getHomeworksForTeacher();
@@ -732,6 +842,7 @@ const Homework = () => {
                                     ...item,
                                     createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
                                     deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
+                                    attachments: item.attachments || [],
                                 })));
                             }
                         } else {
@@ -784,6 +895,23 @@ const Homework = () => {
                             placeholder="请选择截止时间"
                             style={{ width: '100%' }}
                         />
+                    </Form.Item>
+                    <Form.Item
+                        label="作业附件"
+                        name="attachments"
+                    >
+                        <Upload
+                            fileList={uploadFiles}
+                            onChange={({ fileList }) => setUploadFiles(fileList)}
+                            beforeUpload={() => false}
+                            accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.jpg,.jpeg,.png"
+                            multiple
+                        >
+                            <Button icon={<span>📁</span>}>上传附件</Button>
+                        </Upload>
+                        <div style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
+                            支持格式：PDF、Word文档、PPT、图片、文本文件等
+                        </div>
                     </Form.Item>
                     <Form.Item>
                         <Button type="primary" htmlType="submit" block>
@@ -846,6 +974,7 @@ const Homework = () => {
                                                 ...item,
                                                 createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
                                                 deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
+                                                attachments: item.attachments || [],
                                             })));
                                         }
                                     } else {
@@ -1085,6 +1214,177 @@ const Homework = () => {
                         </div>
                     )}
                 </div>
+            </Modal>
+            
+            {/* 编辑作业模态框 */}
+            <Modal
+                title="编辑作业"
+                open={editModalVisible}
+                onCancel={() => {
+                    setEditModalVisible(false);
+                    editForm.resetFields();
+                    setEditUploadFiles([]);
+                    setEditingHomework(null);
+                }}
+                footer={null}
+                width={600}
+            >
+                {editingHomework && (
+                    <div>
+                        <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '6px' }}>
+                            <Typography.Text type="secondary">
+                                💡 修改作业信息后，已发布的作业将立即更新，学生可以看到最新内容
+                            </Typography.Text>
+                        </div>
+                        <Form
+                            form={editForm}
+                            layout="vertical"
+                            onFinish={async (values) => {
+                                if (!editingHomework) return;
+                                
+                                try {
+                                    // 更新作业信息
+                                    const homeworkData = {
+                                        id: editingHomework.key,
+                                        coursePlanId: editingHomework.coursePlanId || '',
+                                        name: values.homework,
+                                        description: values.description || '',
+                                        order: data.length + 1,
+                                        deadline: values.deadline ? values.deadline.toDate() : new Date(),
+                                        isActive: editingHomework.status === '已发布' ? 1 : 0,
+                                    };
+                                    
+                                    const res = await updateHomeworkById(homeworkData);
+                                    if (res) {
+                                        // 如果有新上传的文件，创建附件
+                                        if (editUploadFiles.length > 0) {
+                                            try {
+                                                for (const file of editUploadFiles) {
+                                                    const formData = new FormData();
+                                                    formData.append('file', file.originFileObj as File);
+                                                    
+                                                                                         // 上传文件
+                                     const uploadResponse = await fetch('/api/upload', {
+                                         method: 'POST',
+                                         body: formData,
+                                     });
+                                     
+                                     if (uploadResponse.ok) {
+                                         const uploadResult = await uploadResponse.json();
+                                         console.log('编辑时文件上传结果:', uploadResult);
+                                         
+                                         if (uploadResult.status === 'success' && uploadResult.data) {
+                                             // 创建附件记录，关联到课程计划
+                                             const attachmentData = {
+                                                 name: file.name,
+                                                 coursePlanId: editingHomework.coursePlanId, // 关联到课程计划
+                                                 attachments: [{
+                                                     name: file.name,
+                                                     fileName: uploadResult.data.fileName,
+                                                     fileKey: uploadResult.data.fileKey,
+                                                 }],
+                                             };
+                                             
+                                             await createAttachment(attachmentData);
+                                         } else {
+                                             console.error('文件上传失败:', uploadResult.error);
+                                             throw new Error(`文件 ${file.name} 上传失败`);
+                                         }
+                                     } else {
+                                         throw new Error(`文件 ${file.name} 上传请求失败`);
+                                     }
+                                                }
+                                                                                     } catch (error) {
+                                             console.error('附件上传失败:', error);
+                                             message.warning('作业更新成功，但部分附件上传失败，请稍后重新上传');
+                                         }
+                                        }
+                                        
+                                        message.success('作业更新成功！');
+                                        setEditModalVisible(false);
+                                        editForm.resetFields();
+                                        setEditUploadFiles([]);
+                                        setEditingHomework(null);
+                                        
+                                        // 重新拉取作业列表
+                                        const result = await getHomeworksForTeacher();
+                                        if (Array.isArray(result)) {
+                                            setData(result.map(item => ({
+                                                ...item,
+                                                createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
+                                                deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
+                                                attachments: item.attachments || [],
+                                            })));
+                                        }
+                                    } else {
+                                        message.error('作业更新失败');
+                                    }
+                                } catch (error) {
+                                    console.error('更新失败:', error);
+                                    message.error('作业更新失败');
+                                }
+                            }}
+                        >
+                            <Form.Item
+                                label="作业名称"
+                                name="homework"
+                                rules={[{ required: true, message: '请输入作业名称' }]}
+                            >
+                                <Input placeholder="请输入作业名称" />
+                            </Form.Item>
+                            <Form.Item
+                                label="作业描述"
+                                name="description"
+                            >
+                                <Input.TextArea placeholder="请输入作业描述" rows={4} />
+                            </Form.Item>
+                            <Form.Item
+                                label="截止时间"
+                                name="deadline"
+                                rules={[{ required: true, message: '请选择作业截止时间' }]}
+                            >
+                                <DatePicker 
+                                    showTime 
+                                    format="YYYY-MM-DD HH:mm:ss" 
+                                    placeholder="请选择截止时间"
+                                    style={{ width: '100%' }}
+                                />
+                            </Form.Item>
+                            <Form.Item
+                                label="添加新附件"
+                                name="newAttachments"
+                            >
+                                <Upload
+                                    fileList={editUploadFiles}
+                                    onChange={({ fileList }) => setEditUploadFiles(fileList)}
+                                    beforeUpload={() => false}
+                                    accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.jpg,.jpeg,.png"
+                                    multiple
+                                >
+                                    <Button icon={<span>📁</span>}>添加附件</Button>
+                                </Upload>
+                                <div style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
+                                    支持格式：PDF、Word文档、PPT、图片、文本文件等
+                                </div>
+                            </Form.Item>
+                            <Form.Item>
+                                <Space>
+                                    <Button type="primary" htmlType="submit">
+                                        保存修改
+                                    </Button>
+                                    <Button onClick={() => {
+                                        setEditModalVisible(false);
+                                        editForm.resetFields();
+                                        setEditUploadFiles([]);
+                                        setEditingHomework(null);
+                                    }}>
+                                        取消
+                                    </Button>
+                                </Space>
+                            </Form.Item>
+                        </Form>
+                    </div>
+                )}
             </Modal>
             </div>
         </>

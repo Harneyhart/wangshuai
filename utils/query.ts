@@ -1117,20 +1117,36 @@ export async function updateHomework(homework: schema.HomeworkInsert) {
 }
 // upsert submissions
 export async function upsertSubmissions(submission: schema.SubmissionInsert) {
-  // 同一个 studentId 和 homeworkId 只能提交一次作业
+  // 允许重复提交：如果已存在则更新，如果不存在则插入
   try {
     // 查找是否已经提交过
-    const res = await db.query.submissions.findFirst({
+    const existingSubmission = await db.query.submissions.findFirst({
       where: (table, { eq, and }) =>
         and(
           eq(table.studentId, submission.studentId),
           eq(table.homeworkId, submission.homeworkId),
         ),
     });
-    if (res) {
-      throw new Error('已经提交过作业');
+    
+    if (existingSubmission) {
+      // 如果已存在，则更新现有记录
+      return await db
+        .update(schema.submissions)
+        .set({
+          text: submission.text,
+          updatedAt: new Date(), // 更新时间
+        })
+        .where(
+          and(
+            eq(schema.submissions.studentId, submission.studentId),
+            eq(schema.submissions.homeworkId, submission.homeworkId),
+          )
+        )
+        .returning();
+    } else {
+      // 如果不存在，则插入新记录
+      return await db.insert(schema.submissions).values(submission).returning();
     }
-    return await db.insert(schema.submissions).values(submission).returning();
   } catch (error) {
     console.error(error);
     throw new Error('upsertSubmissions error');

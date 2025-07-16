@@ -34,6 +34,12 @@ interface HomeworkInfo {
     deadline: string;
     status: string;
     studentName?: string;
+    attachments?: Array<{
+        id: string;
+        name: string;
+        fileName: string;
+        fileKey: string;
+    }>;
 }
 
 const SubmitHomework = () => {
@@ -46,24 +52,49 @@ const SubmitHomework = () => {
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [submitModalVisible, setSubmitModalVisible] = useState(false);
     const [currentStudent, setCurrentStudent] = useState<any>(null);
-    const [accessDenied, setAccessDenied] = useState(false);
 
-    // 从URL参数获取作业信息
+    // 从URL参数获取作业基本信息，然后从数据库获取完整信息（包括附件）
     useEffect(() => {
-        const info: HomeworkInfo = {
-            key: searchParams.get('key') || '',
-            homework: searchParams.get('homework') || '',
-            courseName: searchParams.get('courseName') || '',
-            className: searchParams.get('className') || '',
-            description: searchParams.get('description') || '',
-            publishTime: searchParams.get('publishTime') || '',
-            deadline: searchParams.get('deadline') || '',
-            status: searchParams.get('status') || '',
-        };
-        setHomeworkInfo(info);
+        const homeworkKey = searchParams.get('key');
+        if (homeworkKey) {
+            // 先设置基本信息
+            const basicInfo: HomeworkInfo = {
+                key: homeworkKey,
+                homework: searchParams.get('homework') || '',
+                courseName: searchParams.get('courseName') || '',
+                className: searchParams.get('className') || '',
+                description: searchParams.get('description') || '',
+                publishTime: searchParams.get('publishTime') || '',
+                deadline: searchParams.get('deadline') || '',
+                status: searchParams.get('status') || '',
+            };
+            setHomeworkInfo(basicInfo);
+
+            // 从数据库获取完整的作业信息（包括附件）
+            const fetchHomeworkDetail = async () => {
+                try {
+                    const response = await fetch(`/api/student/homework/${homeworkKey}`);
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success && result.data) {
+                            const fullInfo = {
+                                ...basicInfo,
+                                attachments: result.data.attachments || [],
+                            };
+                            setHomeworkInfo(fullInfo);
+                        }
+                    }
+                } catch (error) {
+                    console.error('获取作业详情失败:', error);
+                    // 如果获取失败，保持基本信息不变
+                }
+            };
+
+            fetchHomeworkDetail();
+        }
     }, [searchParams]);
 
-    // 页面加载时获取学生信息并验证权限
+    // 页面加载时获取学生信息
     useEffect(() => {
         const fetchStudentInfo = async () => {
             try {
@@ -74,50 +105,20 @@ const SubmitHomework = () => {
                         setCurrentStudent(result.data);
                         form.setFieldsValue({ studentName: result.data.name });
                         console.log('获取到学生信息:', result.data);
-                        
-                        // 验证学生是否有权限查看这个作业
-                        if (homeworkInfo) {
-                            await verifyHomeworkAccess(result.data, homeworkInfo);
-                    }
                     }
                 } else {
                     console.error('获取学生信息失败:', response.status);
-                    setAccessDenied(true);
+                    // 不设置访问拒绝，因为可能是API问题而不是权限问题
                 }
             } catch (error) {
                 console.error('获取学生信息失败:', error);
-                setAccessDenied(true);
+                // 不设置访问拒绝，因为可能是网络问题而不是权限问题
             }
         };
         fetchStudentInfo();
-    }, [form, homeworkInfo]);
+    }, [form]);
 
-    // 验证作业访问权限
-    const verifyHomeworkAccess = async (student: any, homework: HomeworkInfo) => {
-        try {
-            // 获取学生所在的班级信息
-            const response = await fetch('/api/student/courses');
-            if (response.ok) {
-                const result = await response.json();
-                if (result.success && result.data) {
-                    // 检查学生是否在这个作业对应的班级中
-                    const studentClasses = result.data.map((course: any) => course.className);
-                    
-                    if (!studentClasses.includes(homework.className)) {
-                        console.log('学生不在作业所属班级中:', {
-                            studentClasses,
-                            homeworkClass: homework.className
-                        });
-                        setAccessDenied(true);
-                        message.error('您无权访问此作业，这不是您班级的作业');
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('验证作业权限失败:', error);
-            setAccessDenied(true);
-        }
-    };
+
 
     // 文件上传配置
     const uploadProps: UploadProps = {
@@ -219,7 +220,7 @@ const SubmitHomework = () => {
             teacherSubmissions.push(teacherSubmission);
             localStorage.setItem('teacherSubmissions', JSON.stringify(teacherSubmissions));
             
-            message.success('作业提交成功！');
+            message.success('作业提交成功！如有需要，您可以随时重新提交更新内容。');
             setSubmitModalVisible(false);
             
             // 返回作业列表页面
@@ -237,6 +238,7 @@ const SubmitHomework = () => {
     const handleBack = () => {
         router.back();
     };
+    
 
     // 检查是否临近截止时间
     const isNearDeadline = () => {
@@ -259,33 +261,7 @@ const SubmitHomework = () => {
         return <div style={{ padding: 24 }}>加载中...</div>;
     }
 
-    // 如果访问被拒绝，显示错误页面
-    if (accessDenied) {
-        return (
-            <div style={{ padding: 24, maxWidth: 600, margin: '0 auto', textAlign: 'center' }}>
-                <Card>
-                    <div style={{ padding: '40px 20px' }}>
-                        <div style={{ fontSize: '48px', marginBottom: '16px' }}>🚫</div>
-                        <Title level={3} style={{ color: '#ff4d4f', marginBottom: '16px' }}>
-                            访问被拒绝
-                        </Title>
-                        <Paragraph style={{ fontSize: '16px', color: '#666', marginBottom: '24px' }}>
-                            您无权访问此作业。这可能不是您班级的作业，或者您没有相应的权限。
-                        </Paragraph>
-                        <Space>
-                            <Button 
-                                type="primary" 
-                                icon={<ArrowLeftOutlined />}
-                                onClick={handleBack}
-                            >
-                                返回作业列表
-                            </Button>
-                        </Space>
-                    </div>
-                </Card>
-            </div>
-        );
-    }
+
 
     return (
         <div style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
@@ -294,7 +270,7 @@ const SubmitHomework = () => {
                 <Title style={{ fontSize: 30, fontWeight: 500, marginBottom: '4px', margin: 0 }}>提交作业</Title>
                 <Button 
                     icon={<ArrowLeftOutlined />} 
-                    onClick={handleBack}
+                    onClick={() => router.back()}
                     
                 >
                     返回
@@ -338,6 +314,61 @@ const SubmitHomework = () => {
                             <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
                                 {homeworkInfo.description}
                             </Paragraph>
+                        </Descriptions.Item>
+                    )}
+                    {homeworkInfo.attachments && homeworkInfo.attachments.length > 0 && (
+                        <Descriptions.Item label="作业附件" span={2}>
+                            <div style={{ marginTop: '8px' }}>
+                                <div style={{ padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '6px', marginBottom: '12px' }}>
+                                    <Typography.Text type="secondary" style={{ fontSize: '14px' }}>
+                                        📋 教师提供的作业材料和要求，请仔细查看后完成作业
+                                    </Typography.Text>
+                                </div>
+                                <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                                    {homeworkInfo.attachments.map((attachment, index) => (
+                                        <div key={index} style={{ 
+                                            padding: '12px', 
+                                            border: '1px solid #d9d9d9', 
+                                            borderRadius: '8px', 
+                                            marginBottom: '8px',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            backgroundColor: '#fafafa',
+                                            boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                                        }}>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 500, color: '#1890ff', marginBottom: '4px' }}>
+                                                    📎 {attachment.name}
+                                                </div>
+                                                <div style={{ fontSize: '12px', color: '#666' }}>
+                                                    文件名: {attachment.fileName}
+                                                </div>
+                                            </div>
+                                            <Space>
+                                                <Button 
+                                                    size="small" 
+                                                    type="primary"
+                                                    onClick={() => window.open(`/api/attachment/view?key=${attachment.fileKey}`, '_blank')}
+                                                >
+                                                    预览
+                                                </Button>
+                                                <Button 
+                                                    size="small"
+                                                    onClick={() => {
+                                                        const link = document.createElement('a');
+                                                        link.href = `/api/attachment/view?key=${attachment.fileKey}&download=1`;
+                                                        link.download = attachment.fileName;
+                                                        link.click();
+                                                    }}
+                                                >
+                                                    下载
+                                                </Button>
+                                            </Space>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </Descriptions.Item>
                     )}
                 </Descriptions>
@@ -387,6 +418,18 @@ const SubmitHomework = () => {
                         />
                     </Form.Item>
 
+                    <div style={{ 
+                        marginBottom: 16, 
+                        padding: '12px', 
+                        backgroundColor: '#f0f9ff', 
+                        border: '1px solid #91d5ff',
+                        borderRadius: '6px' 
+                    }}>
+                        <p style={{ margin: 0, color: '#1890ff', fontSize: '14px' }}>
+                            💡 <strong>温馨提示：</strong>您可以多次提交作业，系统会保留最新的提交内容。如需修改已提交的作业，直接重新提交即可。
+                        </p>
+                    </div>
+
                     <Form.Item label="上传文件">
                         <Upload.Dragger {...uploadProps}>
                             <p className="ant-upload-drag-icon">
@@ -425,7 +468,7 @@ const SubmitHomework = () => {
                             >
                                 提交作业
                             </Button>
-                            <Button size="large" onClick={handleBack}>
+                            <Button size="large" onClick={() => router.back()}>
                                 取消
                             </Button>
                         </Space>
@@ -452,11 +495,11 @@ const SubmitHomework = () => {
                     <Divider />
                     {isOverdue() ? (
                         <p style={{ color: '#fa8c16' }}>
-                            ⚠️ 作业已超时，提交后将标记为迟交且无法修改，请确认作业内容无误后再提交
+                            ⚠️ 作业已超时，提交后将标记为迟交。如有需要，您可以重新提交覆盖之前的内容。
                         </p>
                     ) : (
-                        <p style={{ color: '#fa8c16' }}>
-                            ⚠️ 提交后将无法修改，请确认作业内容无误后再提交
+                        <p style={{ color: '#1890ff' }}>
+                            💡 提示：您可以重复提交作业，新的提交内容将覆盖之前的版本。
                         </p>
                     )}
                 </div>

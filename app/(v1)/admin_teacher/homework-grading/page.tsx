@@ -45,6 +45,7 @@ const HomeworkGradingPage = () => {
   const [selectedRecord, setSelectedRecord] = useState<GradingRecord | null>(null);
   const [gradingForm] = Form.useForm();
   const [totalStudentCount, setTotalStudentCount] = useState(0);
+  const [classStudentCounts, setClassStudentCounts] = useState<{[className: string]: number}>({});
 
   // 搜索相关状态
   const [courseOptions, setCourseOptions] = useState<{label: string, value: string}[]>([]);
@@ -76,12 +77,14 @@ const HomeworkGradingPage = () => {
           fetch(`/api/homework/student-count?homeworkId=${homeworkId}`)
         ]);
         
+        let submissionData: GradingRecord[] = [];
+        
         // 处理作业提交数据
         if (submissionsResponse.ok) {
           const submissionsResult = await submissionsResponse.json();
           console.log('提交数据API响应:', submissionsResult);
           if (submissionsResult.success) {
-            const submissionData = submissionsResult.data || [];
+            submissionData = submissionsResult.data || [];
             setData(submissionData);
             setFilteredData(submissionData);
             
@@ -107,19 +110,38 @@ const HomeworkGradingPage = () => {
           const studentCountResult = await studentCountResponse.json();
           console.log('学生数量API响应:', studentCountResult);
           if (studentCountResult.success && studentCountResult.data) {
-            setTotalStudentCount(studentCountResult.data.studentCount);
+            // 设置总学生数
+            setTotalStudentCount(studentCountResult.data.studentCount || 0);
+            
+            // 如果API返回了按班级分组的数据，使用它；否则从提交数据中推断
+            if (studentCountResult.data.classCounts) {
+              setClassStudentCounts(studentCountResult.data.classCounts);
+                         } else {
+               // 从提交数据中提取班级信息，假设每个班级大致相同的人数
+               const classes = Array.from(new Set(submissionData.map((item: GradingRecord) => item.className))).filter(Boolean) as string[];
+               const avgStudentsPerClass = classes.length > 0 ? Math.ceil((studentCountResult.data.studentCount || 0) / classes.length) : 0;
+               
+               const classCountsFromData: {[key: string]: number} = {};
+               classes.forEach(className => {
+                 classCountsFromData[className] = avgStudentsPerClass;
+               });
+               setClassStudentCounts(classCountsFromData);
+             }
           } else {
             console.error('获取学生总数错误:', studentCountResult.error);
             setTotalStudentCount(0);
+            setClassStudentCounts({});
           }
         } else {
           console.error('获取学生总数API调用失败:', studentCountResponse.status);
           setTotalStudentCount(0);
+          setClassStudentCounts({});
         }
       } catch (error) {
         console.error('获取数据失败:', error);
         setData([]);
         setTotalStudentCount(0);
+        setClassStudentCounts({});
       } finally {
         setLoading(false);
       }
@@ -295,7 +317,7 @@ const HomeworkGradingPage = () => {
     {
       title: '学生姓名',
       dataIndex: 'studentName',
-      width: 150,
+      width: 130,
       align: 'center' as const,
       render: (text: string, record: GradingRecord) => (
         <div style={{ fontWeight: 500 }}>
@@ -306,7 +328,7 @@ const HomeworkGradingPage = () => {
     {
       title: '提交时间',
       dataIndex: 'submitTime',
-      width: 180,
+      width: 175,
       align: 'center' as const,
       render: (text: string) => text ? new Date(text).toLocaleString() : (
         <span style={{ color: '#999' }}>未提交</span>
@@ -344,18 +366,33 @@ const HomeworkGradingPage = () => {
     {
       title: '评分',
       dataIndex: 'score',
-      width: 120,
+      width: 200,
       align: 'center' as const,
-      render: (score: number, record: GradingRecord) => (
-        <div>
-          <div style={{ fontSize: '16px', fontWeight: 'bold', color: score ? '#1890ff' : '#999' }}>
-            {score || '-'} / {record.maxScore}
+              render: (score: number, record: GradingRecord) => (
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            padding: '0 8px'
+          }}>
+            <div style={{ 
+              fontSize: '16px', 
+              fontWeight: 'bold', 
+              color: score ? '#1890ff' : '#999' 
+            }}>
+              {score || '-'} / {record.maxScore}
+            </div>
+            <div style={{ 
+              width: '1px', 
+              height: '20px', 
+              borderLeft: '1px dashed #d9d9d9',
+              margin: '0 8px'
+            }}></div>
+            <Tag color={record.status === '已评分' ? 'green' : 'orange'} style={{ margin: 0 }}>
+              {record.status}
+            </Tag>
           </div>
-          <Tag color={record.status === '已评分' ? 'green' : 'orange'} style={{ marginTop: 4 }}>
-            {record.status}
-          </Tag>
-        </div>
-      )
+        )
     },
     {
       title: '操作',
@@ -436,6 +473,22 @@ const HomeworkGradingPage = () => {
     ? Math.round(data.filter(record => record.status === '已评分').reduce((sum, record) => sum + (record.score || 0), 0) / allGradedCount)
     : 0;
 
+  // 计算应交人数：根据是否有班级筛选来动态计算
+  const getExpectedStudentCount = () => {
+    if (searchClass && searchClass.trim()) {
+      // 如果筛选了特定班级，返回该班级的学生数
+      return classStudentCounts[searchClass] || 0;
+    } else {
+      // 如果没有筛选班级，返回所有相关班级的学生总数
+      const relevantClasses = Array.from(new Set(data.map(item => item.className))).filter(Boolean) as string[];
+      return relevantClasses.reduce((total, className) => {
+        return total + (classStudentCounts[className] || 0);
+      }, 0);
+    }
+  };
+
+  const expectedStudentCount = getExpectedStudentCount();
+
   return (
     <div style={{ background: '#fff', padding: 24, borderRadius: 8 }}>
       {/* 页面头部 */}
@@ -459,13 +512,18 @@ const HomeworkGradingPage = () => {
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={6}>
           <Card style={{ backgroundColor: '#f0f2f5' }}>
-            <Statistic title="应交人数" value={totalStudentCount + totalCount} />
+            <Statistic title="应交人数" value={expectedStudentCount} />
+            {(searchCourse || searchClass || searchStudent) && (
+              <div style={{ fontSize: '12px', color: '#1890ff', marginTop: '4px' }}>
+                {searchClass ? `(${searchClass} 班级)` : '(筛选后显示)'}
+              </div>
+            )}
           </Card>
         </Col>
         <Col span={6}>
           <Card style={{ backgroundColor: '#f0f2f5' }}>
             <Statistic title="已提交" value={totalCount} valueStyle={{ color: 'green' }}/>
-            <Statistic title="未提交" value={Math.max(0, totalStudentCount - totalCount)} valueStyle={{ color: 'red' }} />
+            <Statistic title="未提交" value={Math.max(0, expectedStudentCount - totalCount)} valueStyle={{ color: 'red' }} />
             {(searchCourse || searchClass || searchStudent) && (
               <div style={{ fontSize: '12px', color: '#1890ff', marginTop: '4px' }}>
                 (筛选后显示)
