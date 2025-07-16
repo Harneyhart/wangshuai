@@ -3,10 +3,11 @@
 // 作业批改页面
 import { useState, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
-import { App, Col, Row, Space, message, Button, Table, Tag, Modal, Input, Typography, Descriptions } from 'antd';
-import { getAllSubmissions } from '@/lib/course/actions';
+import { App, Col, Row, Space, message, Button, Table, Tag, Modal, Input, Typography, Descriptions, List } from 'antd';
+import { getAllSubmissions, getAttachmentsByCoursePlanId } from '@/lib/course/actions';
 import { SubmissionsWithRelations } from '@/lib/course/actions';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 // 使用数据库返回的SubmissionsWithRelations类型
 type HomeworkSubmission = SubmissionsWithRelations;
@@ -42,6 +43,9 @@ const Homework = () => {
 
     // 作业详情弹窗状态
     const [detailModalVisible, setDetailModalVisible] = useState(false);
+    const [teacherAttachments, setTeacherAttachments] = useState<any[]>([]);
+    const [studentAttachments, setStudentAttachments] = useState<any[]>([]);
+    const [attachmentsLoading, setAttachmentsLoading] = useState(false);
 
     // 从数据库读取学生提交的作业数据并处理为去重的作业列表
     useEffect(() => {
@@ -169,6 +173,86 @@ const Homework = () => {
         router.push(`/admin_teacher/homework-grading?${params.toString()}`);
     };
 
+    // 获取作业附件信息
+    const loadHomeworkAttachments = async (homework: HomeworkItem) => {
+        try {
+            setAttachmentsLoading(true);
+            
+            // 获取教师上传的附件（通过课程计划）
+            if (homework.plan?.id) {
+                const teacherAttachmentsData = await getAttachmentsByCoursePlanId(homework.plan.id);
+                setTeacherAttachments(teacherAttachmentsData.map(item => item.attachment));
+            } else {
+                setTeacherAttachments([]);
+            }
+
+            // 获取学生提交的附件（通过作业提交记录）
+            const submissions = await getAllSubmissions();
+            const homeworkSubmissions = submissions.filter(sub => sub.homework?.id === homework.id);
+            
+            // 收集所有学生提交的附件
+            const allStudentAttachments: any[] = [];
+            homeworkSubmissions.forEach(submission => {
+                if (submission.attachments && submission.attachments.length > 0) {
+                    submission.attachments.forEach(att => {
+                        allStudentAttachments.push({
+                            ...att.attachment,
+                            studentName: submission.student?.name || '未知学生',
+                            submitTime: submission.createdAt,
+                        });
+                    });
+                }
+            });
+            
+            setStudentAttachments(allStudentAttachments);
+        } catch (error) {
+            console.error('获取作业附件失败:', error);
+            message.error('获取附件信息失败');
+        } finally {
+            setAttachmentsLoading(false);
+        }
+    };
+
+    // 渲染文件链接
+    const renderFileLink = (file: any) => {
+        const getFileIcon = (fileName: string) => {
+            const ext = fileName.split('.').pop()?.toLowerCase();
+            switch (ext) {
+                case 'pdf': return '📄';
+                case 'doc':
+                case 'docx': return '📝';
+                case 'xls':
+                case 'xlsx': return '📊';
+                case 'ppt':
+                case 'pptx': return '📈';
+                case 'jpg':
+                case 'jpeg':
+                case 'png':
+                case 'gif': return '🖼️';
+                case 'zip':
+                case 'rar': return '📦';
+                default: return '📎';
+            }
+        };
+
+        return (
+            <Link 
+                href={`/api/attachment/view?key=${file.fileKey}`} 
+                target="_blank"
+                style={{ 
+                    color: '#1890ff',
+                    textDecoration: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                }}
+            >
+                <span>{getFileIcon(file.name)}</span>
+                <span>{file.name}</span>
+            </Link>
+        );
+    };
+
     // 获取当前显示的作业列表
     const getCurrentHomeworkList = () => {
         return isSearching ? filteredHomeworkList : data;
@@ -178,7 +262,7 @@ const Homework = () => {
         {
             title: '序号',
             dataIndex: 'index',
-            width: 60,
+            width: 80,
             render: (_: any, _record: any, idx: number) => idx + 1,
         },
         {
@@ -195,7 +279,7 @@ const Homework = () => {
         {
             title: '作业名称',
             dataIndex: 'name',
-            width: 300,
+            width: 230,
             ellipsis: true,
             render: (name: string) => (
                 <div>
@@ -225,7 +309,7 @@ const Homework = () => {
         {
             title: '提交情况',
             dataIndex: 'submissionInfo',
-            width: 120,
+            width: 140,
             align: 'center' as const,
             render: (_: any, record: HomeworkItem) => (
                 <div>
@@ -243,13 +327,14 @@ const Homework = () => {
         {
             title: '操作',
             dataIndex: 'action',
-            width: 150,
+            width: 170,
             align: 'center' as const,
             render: (_: any, record: HomeworkItem) => (
                 <Space size="small">
-                    <a onClick={() => {
+                    <a onClick={async () => {
                         setSelectedHomework(record);
                         setDetailModalVisible(true);
+                        await loadHomeworkAttachments(record);
                     }}>查看详情</a>
                     <a onClick={() => handleGotoGrading(record)}>批改作业</a>
                 </Space>
@@ -388,7 +473,12 @@ const Homework = () => {
             <Modal
                 title="作业详情"
                 open={detailModalVisible}
-                onCancel={() => setDetailModalVisible(false)}
+                onCancel={() => {
+                    setDetailModalVisible(false);
+                    setTeacherAttachments([]);
+                    setStudentAttachments([]);
+                    setAttachmentsLoading(false);
+                }}
                 footer={null}
                 width={800}
             >
@@ -406,15 +496,6 @@ const Homework = () => {
                             </Descriptions.Item>
                             <Descriptions.Item label="截止时间">
                                 {selectedHomework.deadline ? dayjs(selectedHomework.deadline).format('YYYY-MM-DD HH:mm:ss') : '-'}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="提交人数">
-                                {selectedHomework.submissionCount} 人
-                            </Descriptions.Item>
-                            <Descriptions.Item label="已批改">
-                                {selectedHomework.gradedCount} 人
-                            </Descriptions.Item>
-                            <Descriptions.Item label="未批改">
-                                {selectedHomework.submissionCount - selectedHomework.gradedCount} 人
                             </Descriptions.Item>
                             <Descriptions.Item label="批改进度">
                                 <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -439,6 +520,68 @@ const Homework = () => {
                                             : 0
                                         }%
                                     </span>
+                                </div>
+                            </Descriptions.Item>
+                            {/* <Descriptions.Item label="教师上传的附件">
+                                <div>
+                                    {attachmentsLoading ? (
+                                        <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+                                            正在加载附件信息...
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div style={{ marginBottom: '8px', fontSize: '12px', color: '#666' }}>
+                                                共 {teacherAttachments.length} 个附件
+                                            </div>
+                                            {teacherAttachments.length > 0 ? (
+                                                <List
+                                                    size="small"
+                                                    dataSource={teacherAttachments}
+                                                    renderItem={(item) => (
+                                                        <List.Item>
+                                                            {renderFileLink(item)}
+                                                        </List.Item>
+                                                    )}
+                                                />
+                                            ) : (
+                                                <span style={{ color: '#999' }}>暂无附件</span>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            </Descriptions.Item> */}
+                            <Descriptions.Item label="附件">
+                                <div>
+                                    {attachmentsLoading ? (
+                                        <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+                                            正在加载附件信息...
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div style={{ marginBottom: '8px', fontSize: '12px', color: '#666' }}>
+                                                共 {studentAttachments.length} 个附件
+                                            </div>
+                                            {studentAttachments.length > 0 ? (
+                                                <List
+                                                    size="small"
+                                                    dataSource={studentAttachments}
+                                                    renderItem={(item) => (
+                                                        <List.Item>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                                                                {renderFileLink(item)}
+                                                                <div style={{ fontSize: '12px', color: '#666' }}>
+                                                                    提交者: {item.studentName} | 
+                                                                    时间: {dayjs(item.submitTime).format('MM-DD HH:mm')}
+                                                                </div>
+                                                            </div>
+                                                        </List.Item>
+                                                    )}
+                                                />
+                                            ) : (
+                                                <span style={{ color: '#999' }}>暂无学生提交附件</span>
+                                            )}
+                                        </>
+                                    )}
                                 </div>
                             </Descriptions.Item>
                         </Descriptions>

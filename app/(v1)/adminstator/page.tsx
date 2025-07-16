@@ -30,12 +30,8 @@ import type {
 import Link from 'next/link';
 
 import UserList from './user';
-import ClassList from './class';
 import StudentList from './student';
 import TeacherList from './teacher';
-import Course from './course';
-import CourseHour from './course-hour';
-import Homework from './homework';
 
 const Admin = ({
   searchParams,
@@ -63,26 +59,7 @@ const Admin = ({
       label: '老师管理',
       children: <TeacherList />,
     },
-    {
-      key: 'class',
-      label: '班级管理',
-      children: <ClassList />,
-    },
-    {
-      key: 'course',
-      label: '课程管理',
-      children: <Course />,
-    },
-    {
-      key: 'courseHour',
-      label: '排课管理',
-      children: <CourseHour />,
-    },
-    {
-      key: 'homework',
-      label: '作业管理',
-      children: <Homework />,
-    },
+
   ];
   return (
     <div>
@@ -91,7 +68,7 @@ const Admin = ({
         tabPosition="left"
         items={items}
         onChange={(key) => {
-          router.push(`/admin?tab=${key}`);
+          router.push(`/adminstator?tab=${key}`);
         }}
       />
     </div>

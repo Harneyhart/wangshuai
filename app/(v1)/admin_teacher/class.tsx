@@ -295,13 +295,11 @@ const ClassList = () => {
                                                 ) : course.name}
                                             </span>
                                             <Space>
-                                                <Tag color={
+                                                {/* <Tag color={
                                                     course.description?.includes('必修') ? 'red' :
                                                     course.description?.includes('选修') ? 'blue' : 'green'
                                                 }>
-                                                    {course.description?.includes('必修') ? '必修' :
-                                                     course.description?.includes('选修') ? '选修' : '公共'}
-                                                </Tag>
+                                                </Tag> */}
                                                 <Tag color={course.isActive === 1 ? 'blue' : 'red'}>
                                                     {course.isActive === 1 ? '启用' : '禁用'}
                                                 </Tag>

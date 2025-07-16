@@ -203,14 +203,6 @@ const HomeworkDetail = () => {
       render: (_, __, index) => index + 1,
     },
     {
-      title: '课程名称',
-      dataIndex: 'courseName',
-      width: 150,
-      render: (text) => (
-        <Text strong style={{ color: '#1890ff' }}>{text}</Text>
-      ),
-    },
-    {
       title: '发布方式',
       dataIndex: 'className',
       width: 150,

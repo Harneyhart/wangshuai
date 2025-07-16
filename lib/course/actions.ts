@@ -117,7 +117,7 @@ export type InferQueryModel<
   QBConfig extends QueryConfig<TableName> = {},
 > = BuildQueryResult<TSchema, TSchema[TableName], QBConfig>;
 
-export type UserItem = {
+export type TeacherItem = {
   id: string;
   name: string;
   email: string;
@@ -144,7 +144,7 @@ function withAuth<T extends (...args: any[]) => Promise<any>>(fn: T): T {
   } as T;
 }
 
-export async function getAllUsers(): Promise<UserItem[]> {
+export async function getAllUsers(): Promise<TeacherItem[]> {
   const data = await queryUsers();
   return data.map((user) => {
     return {
@@ -472,16 +472,22 @@ export async function checkIsTeacher(userId: string) {
   return !!teacher;
 }
 
-export type TeacherItem = {
+
+export type CreateTeacherItem = {
   name: string;
-  userId: string;
+  email: string;
+  hashedPassword: string;
 };
 
-export async function createTeacher(formData: TeacherItem) {
-  const userId = generateId(21);
+export async function createTeacher(formData: CreateTeacherItem) {
+  const { name, email, hashedPassword } = formData;
+  const id = generateId(21);
+  
+  // 直接创建教师
   const data = await upsertTeacher({
-    id: userId,
-    ...formData,
+    id,
+    name,
+    userId: id, // 使用同一个ID作为userId
   });
   return data;
 }

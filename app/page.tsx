@@ -2,11 +2,7 @@ import { redirect } from 'next/navigation';
 import dayjs from 'dayjs';
 import Link from 'next/link';
 
-import {
-  checkIsStudent,
-  checkIsTeacher,
-  getCourseHourByUserId,
-} from '@/lib/course/actions';
+import { getCourseHourByUserId } from '@/lib/course/actions';
 import type { CourseHoursWithRelations } from '@/lib/course/actions';
 import { validateRequest } from '@/lib/auth/validate-request';
 import SignOutButton from '@/components/demo/SignOutButton';
@@ -15,77 +11,70 @@ const Page = async () => {
   const { user } = await validateRequest();
   console.log('user', user);
   if (!user) redirect('/login');
-  let courseHours: CourseHoursWithRelations[] = [];
-  const isStudent = await checkIsStudent(user.id);
-  const isTeacher = await checkIsTeacher(user.id);
-  if (isStudent) {
-    courseHours = await getCourseHourByUserId(user.id);
-  }
+
+  const courseHours = await getCourseHourByUserId(user.id);
+  console.log('courseHours', courseHours);
+
   return (
-    <div className="m-10">
-      <div className="mb-10">
-        <p>你好：{user.email}</p>
-        <p>欢迎回来！</p>
-      </div>
-      <div className="mb-20">
-        {isStudent && (
-          <div>
-            <h2>课程列表</h2>
-            {courseHours.length > 0 ? (
-              <ul role="list" className="divide-y divide-gray-100">
-                {courseHours.map((hour) => (
-                  <li
-                    key={hour.id}
-                    className="flex items-center justify-between gap-x-6 py-5"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-start gap-x-3">
-                        <p className="text-sm font-semibold leading-6 text-gray-900">
-                          {hour.plan.course.name}
-                        </p>
-                      </div>
-                      <div className="mt-1 flex items-center gap-x-2 text-xs leading-5 text-gray-500">
-                        <p className="whitespace-nowrap">
-                          <time>
-                            {dayjs(hour.startTime).format('MM-DD HH:mm')}
-                          </time>
-                        </p>
-                        <svg
-                          viewBox="0 0 2 2"
-                          className="h-0.5 w-0.5 fill-current"
-                        >
-                          <circle cx={1} cy={1} r={1} />
-                        </svg>
-                        <p className="truncate">{hour.classRoom}</p>
-                      </div>
-                    </div>
-                    <div className="flex flex-none items-center gap-x-4">
-                      <Link
-                        target="_blank"
-                        href={`/course/hour/${hour.id}`}
-                        className="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 hover:text-primary"
-                      >
-                        查看
-                      </Link>
-                      <p className="flex-none"></p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-gray-400">暂无课程</p>
-            )}
-          </div>
-        )}
-        {isTeacher && (
-          <div>
-            <Link href="/admin">进入管理后台</Link>
-          </div>
-        )}
-      </div>
-      <div>
+    <div className="container mx-auto p-4">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">欢迎, {user.name}!</h1>
         <SignOutButton />
       </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <Link
+          href="/admin"
+          className="p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+        >
+          <h2 className="text-xl font-semibold mb-2">管理员</h2>
+          <p className="text-gray-600">系统管理功能</p>
+        </Link>
+
+        <Link
+          href="/admin_teacher"
+          className="p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+        >
+          <h2 className="text-xl font-semibold mb-2">教师端</h2>
+          <p className="text-gray-600">教师管理功能</p>
+        </Link>
+
+        <Link
+          href="/admin_student"
+          className="p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+        >
+          <h2 className="text-xl font-semibold mb-2">学生端</h2>
+          <p className="text-gray-600">学生学习功能</p>
+        </Link>
+      </div>
+
+      {courseHours.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-xl font-semibold mb-4">我的课程安排</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {courseHours.map((courseHour) => (
+              <div
+                key={courseHour.id}
+                className="p-4 bg-white rounded-lg shadow-md"
+              >
+                <h3 className="font-semibold mb-2">
+                  {courseHour.plan.course.name}
+                </h3>
+                <p className="text-sm text-gray-600 mb-2">
+                  班级: {courseHour.plan.class.name}
+                </p>
+                <p className="text-sm text-gray-600 mb-2">
+                  教室: {courseHour.classRoom}
+                </p>
+                <p className="text-sm text-gray-600">
+                  时间: {dayjs(courseHour.startTime).format('MM-DD HH:mm')} -{' '}
+                  {dayjs(courseHour.endTime).format('HH:mm')}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

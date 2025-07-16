@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { validateRequest } from '@/lib/auth/validate-request';
+import { checkIsTeacher, checkIsStudent } from '@/lib/course/actions';
 import { Login } from './login';
 
 export const metadata = {
@@ -10,7 +11,21 @@ export const metadata = {
 export default async function LoginPage() {
   const { user } = await validateRequest();
 
-  if (user) redirect('/');
+  if (user) {
+    // 根据用户角色跳转到不同页面
+    const isTeacher = await checkIsTeacher(user.id);
+    const isStudent = await checkIsStudent(user.id);
+
+    if (isTeacher) {
+      redirect('/admin_teacher');
+    } else if (isStudent) {
+      redirect('/admin_student');
+    } else if (user.isAdmin) {
+      redirect('/admin');
+    } else {
+      redirect('/');
+    }
+  }
 
   return <Login />;
 }

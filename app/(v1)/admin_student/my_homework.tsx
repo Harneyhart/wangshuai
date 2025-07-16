@@ -370,23 +370,48 @@ const HomeWork = () => {
                 if (record.score !== null && record.score !== undefined) {
                     // 有评分 - 显示具体分数
                     return (
-                        <div>
-                            <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#1890ff' }}>
-                                {record.score} 分
+                        <div style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center',
+                            padding: '0 8px'
+                          }}>
+                           <div style={{ 
+                            fontSize: '16px', 
+                            fontWeight: 'bold', 
+                            color: record.score ? '#1890ff' : '#999' 
+                            }}>
+                            {record.score || '-'} 
                             </div>
-                            <Tag color="green" style={{ marginTop: 4 }}>
-                                已评分
+                            <div style={{ 
+                            width: '1px', 
+                            height: '20px', 
+                            borderLeft: '1px dashed #d9d9d9',
+                            margin: '0 8px'
+                            }}></div>
+                            <Tag color={record.status === '已评分' ? 'green' : 'orange'} style={{ margin: 0 }}>
+                            {record.status}
                             </Tag>
                         </div>
                     );
                 } else if (record.isSubmitted) {
                     // 有提交但无评分 - 显示待评分
                     return (
-                        <div>
-                            <div style={{ fontSize: '14px', color: '#999' }}>
-                                -
+                        <div style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center',
+                            padding: '0 8px'
+                          }}>
+                           <div style={{ 
+                            fontSize: '16px', 
+                            fontWeight: 'bold', 
+                            // color: record.score ? '#1890ff' : '#999',
+                            cursor: 'default'
+                            }}>
+                            {record.score || '-'} 
                             </div>
-                            <Tag color="orange" style={{ marginTop: 4 }}>
+                            <Tag color="orange" style={{ margin: 0 }}>
                                 待评分
                             </Tag>
                         </div>
@@ -394,7 +419,7 @@ const HomeWork = () => {
                 } else {
                     // 没有提交记录 - 显示未提交
                     return (
-                        <div>
+                        <div >
                             <div style={{ fontSize: '14px', color: '#999' }}>
                                 -
                             </div>
@@ -522,7 +547,7 @@ const HomeWork = () => {
                 <Row gutter={[16, 12]} align="middle" wrap>
                     <Col xs={24} sm={18} md={14} lg={10}>
                         <Input 
-                            placeholder="搜索作业名称、课程名称或班级..."
+                            placeholder="输入 作业名称 或 课程名称 "
                             value={searchText}
                             onChange={(e) => setSearchText(e.target.value)}
                             onPressEnter={handleSearch}

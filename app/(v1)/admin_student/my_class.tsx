@@ -26,6 +26,95 @@ const Classlist = () => {
     const [detailModalVisible, setDetailModalVisible] = useState(false);
     const [selectedClass, setSelectedClass] = useState<any>(null);
 
+    // 加载教学课件数据
+    const [courseAttachments, setCourseAttachments] = useState<any[]>([]);
+    const [courseAttachmentsLoading, setCourseAttachmentsLoading] = useState(false);
+
+    // 格式化文件大小
+    const formatFileSize = (bytes: number): string => {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+
+    // 获取文件类型图标
+    const getFileIcon = (fileName: string): string => {
+        const extension = fileName.split('.').pop()?.toLowerCase();
+        switch (extension) {
+            case 'pdf': return '📄';
+            case 'doc':
+            case 'docx': return '📝';
+            case 'ppt':
+            case 'pptx': return '📊';
+            case 'xls':
+            case 'xlsx': return '📈';
+            case 'mp4':
+            case 'avi':
+            case 'mov':
+            case 'wmv': return '🎥';
+            case 'mp3':
+            case 'wav':
+            case 'aac': return '🎵';
+            case 'jpg':
+            case 'jpeg':
+            case 'png':
+            case 'gif': return '🖼️';
+            case 'zip':
+            case 'rar':
+            case '7z': return '📦';
+            default: return '📎';
+        }
+    };
+
+    // 判断是否为视频文件
+    const isVideoFile = (fileName: string): boolean => {
+        const videoExtensions = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm'];
+        const extension = fileName.split('.').pop()?.toLowerCase();
+        return videoExtensions.includes(extension || '');
+    };
+
+    // 判断是否为图片文件
+    const isImageFile = (fileName: string): boolean => {
+        const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
+        const extension = fileName.split('.').pop()?.toLowerCase();
+        return imageExtensions.includes(extension || '');
+    };
+
+    // 判断是否为PDF文件
+    const isPdfFile = (fileName: string): boolean => {
+        return fileName.toLowerCase().endsWith('.pdf');
+    };
+
+    const fetchCourseAttachments = async (courseId: string) => {
+        if (!courseId) {
+            setCourseAttachments([]);
+            return;
+        }
+
+        setCourseAttachmentsLoading(true);
+        try {
+            const response = await fetch(`/api/course/attachments?courseId=${courseId}`);
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success && result.data) {
+                    setCourseAttachments(result.data);
+                } else {
+                    setCourseAttachments([]);
+                }
+            } else {
+                setCourseAttachments([]);
+            }
+        } catch (error) {
+            console.error('获取课程课件失败:', error);
+            setCourseAttachments([]);
+        } finally {
+            setCourseAttachmentsLoading(false);
+        }
+    };
+
+
     // 获取学生课程数据
     useEffect(() => {
         const fetchStudentCourses = async () => {
@@ -143,9 +232,11 @@ const Classlist = () => {
             align: 'center',
             render: (_: any, record: any) => (
                 <Space size="small">
-                    <a onClick={() => {
+                    <a onClick={async () => {
                         setSelectedClass(record);
                         setDetailModalVisible(true);
+                        // 获取课程课件数据
+                        await fetchCourseAttachments(record.course?.id);
                     }}>查看详情</a>
                 </Space>
             ),
@@ -181,7 +272,11 @@ const Classlist = () => {
             <Modal
                 title="课程详情"
                 open={detailModalVisible}
-                onCancel={() => setDetailModalVisible(false)}
+                onCancel={() => {
+                    setDetailModalVisible(false);
+                    setCourseAttachments([]);
+                    setCourseAttachmentsLoading(false);
+                }}
                 footer={null}
                 width={800} 
             >
@@ -191,49 +286,185 @@ const Classlist = () => {
                             <Descriptions.Item label="课程名称">
                                 {selectedClass.courseName}
                             </Descriptions.Item>
-                            <Descriptions.Item label="任课教师">
-                                {selectedClass.teacherNames || '暂无教师'}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="上课地点">
-                                {selectedClass.location || '暂无地点'}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="课程描述">
-                                {selectedClass.courseDescription || '暂无描述'}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="作业数量">
-                                {selectedClass.homeworkCount} 个
-                            </Descriptions.Item>
                             <Descriptions.Item label="上课时间">
                                 {selectedClass.createTime ? dayjs(selectedClass.createTime).format('YYYY-MM-DD HH:mm:ss') : '-'}
                             </Descriptions.Item>
                         </Descriptions>
-                        
-                        {/* {selectedClass.course?.homeworks && selectedClass.course.homeworks.length > 0 && (
-                            <div style={{ marginTop: 16 }}>
-                                <Divider orientation="left">作业列表</Divider>
-                                <div style={{ maxHeight: 300, overflow: 'auto' }}>
-                                    {selectedClass.course.homeworks.map((homework: any, index: number) => (
-                                        <div key={homework.id} style={{ 
-                                            padding: 12, 
-                                            border: '1px solid #f0f0f0', 
-                                            borderRadius: 6, 
-                                            marginBottom: 8,
-                                            backgroundColor: '#fafafa'
-                                        }}>
-                                            <div style={{ fontWeight: 500, marginBottom: 4 }}>
-                                                {index + 1}. {homework.name}
-                                            </div>
-                                            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
-                                                {homework.description || '暂无描述'}
-                                            </div>
-                                            <div style={{ fontSize: 12, color: '#999' }}>
-                                                截止时间: {homework.deadline ? dayjs(homework.deadline).format('YYYY-MM-DD HH:mm') : '无限制'}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+                        {/* 课程课件 */}
+                        <div style={{ marginTop: '16px' }}>
+                            <div style={{ 
+                                fontWeight: 'bold', 
+                                marginBottom: '12px', 
+                                color: '#1890ff',
+                                fontSize: '16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px'
+                            }}>
+                                📚 课程课件
+                                {courseAttachmentsLoading && <span style={{ fontSize: '12px', color: '#666' }}>(加载中...)</span>}
                             </div>
-                        )} */}
+                            
+                            {courseAttachmentsLoading ? (
+                                <div style={{ 
+                                    padding: '20px', 
+                                    textAlign: 'center', 
+                                    color: '#666',
+                                    backgroundColor: '#f8f9fa',
+                                    borderRadius: '6px'
+                                }}>
+                                    正在加载课件...
+                                </div>
+                            ) : courseAttachments.length > 0 ? (
+                                <div style={{ 
+                                    maxHeight: '400px', 
+                                    overflowY: 'auto',
+                                    border: '1px solid #f0f0f0',
+                                    borderRadius: '6px',
+                                    padding: '12px'
+                                }}>
+                                    {courseAttachments.map((attachment: any, index: number) => {
+                                        const fileName = attachment.name || `课件${index + 1}`;
+                                        const fileUrl = attachment.url || `/api/attachment/view?key=${attachment.fileKey}`;
+                                        
+                                        return (
+                                            <div 
+                                                key={attachment.id || index}
+                                                style={{ 
+                                                    padding: '12px', 
+                                                    border: '1px solid #e9ecef', 
+                                                    borderRadius: '6px', 
+                                                    marginBottom: '8px',
+                                                    backgroundColor: '#f8f9fa'
+                                                }}
+                                            >
+                                                <div style={{ 
+                                                    display: 'flex', 
+                                                    justifyContent: 'space-between', 
+                                                    alignItems: 'flex-start',
+                                                    marginBottom: '8px'
+                                                }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <div style={{ 
+                                                            display: 'flex', 
+                                                            alignItems: 'center', 
+                                                            gap: '8px',
+                                                            marginBottom: '4px'
+                                                        }}>
+                                                            <span style={{ fontSize: '16px' }}>{getFileIcon(fileName)}</span>
+                                                            <a 
+                                                                href={fileUrl} 
+                                                                target="_blank" 
+                                                                rel="noopener noreferrer"
+                                                                style={{ 
+                                                                    color: '#1890ff', 
+                                                                    textDecoration: 'none',
+                                                                    fontWeight: '500'
+                                                                }}
+                                                            >
+                                                                {fileName}
+                                                            </a>
+                                                        </div>
+                                                        <div style={{ 
+                                                            fontSize: '12px', 
+                                                            color: '#666',
+                                                            marginLeft: '24px'
+                                                        }}>
+                                                            📅 上传时间: {attachment.createdAt ? dayjs(attachment.createdAt).format('YYYY-MM-DD HH:mm') : '未知'}
+                                                            {attachment.fileSize && (
+                                                                <span style={{ marginLeft: '12px' }}>
+                                                                    📏 大小: {formatFileSize(attachment.fileSize)}
+                                                                </span>
+                                                            )}
+                                                            {attachment.uploaderName && (
+                                                                <span style={{ marginLeft: '12px' }}>
+                                                                    👤 上传者: {attachment.uploaderName}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ marginLeft: '12px' }}>
+                                                        <Button 
+                                                            type="link" 
+                                                            size="small"
+                                                            onClick={() => {
+                                                                if (isVideoFile(fileName)) {
+                                                                    Modal.info({
+                                                                        title: `视频预览 - ${fileName}`,
+                                                                        width: '80%',
+                                                                        content: (
+                                                                            <video 
+                                                                                controls 
+                                                                                style={{ width: '100%', maxHeight: '60vh' }}
+                                                                                src={fileUrl}
+                                                                            >
+                                                                                您的浏览器不支持视频播放
+                                                                            </video>
+                                                                        ),
+                                                                        okText: '关闭'
+                                                                    });
+                                                                } else if (isPdfFile(fileName)) {
+                                                                    Modal.info({
+                                                                        title: `PDF预览 - ${fileName}`,
+                                                                        width: '90%',
+                                                                        content: (
+                                                                            <iframe
+                                                                                src={`${fileUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+                                                                                style={{
+                                                                                    width: '100%',
+                                                                                    height: '70vh',
+                                                                                    border: 'none',
+                                                                                    borderRadius: '8px'
+                                                                                }}
+                                                                                title={fileName}
+                                                                            />
+                                                                        ),
+                                                                        okText: '关闭'
+                                                                    });
+                                                                } else if (isImageFile(fileName)) {
+                                                                    Modal.info({
+                                                                        title: `图片预览 - ${fileName}`,
+                                                                        width: '60%',
+                                                                        content: (
+                                                                            <img 
+                                                                                src={fileUrl} 
+                                                                                alt={fileName}
+                                                                                style={{ 
+                                                                                    width: '100%', 
+                                                                                    maxHeight: '60vh',
+                                                                                    objectFit: 'contain'
+                                                                                }}
+                                                                            />
+                                                                        ),
+                                                                        okText: '关闭'
+                                                                    });
+                                                                }
+                                                            }}
+                                                            disabled={!isVideoFile(fileName) && !isPdfFile(fileName) && !isImageFile(fileName)}
+                                                        >
+                                                            {isVideoFile(fileName) ? '🎥 播放' : 
+                                                             isPdfFile(fileName) ? '📄 预览' : 
+                                                             isImageFile(fileName) ? '🖼️ 预览' : '📥 下载'}
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div style={{ 
+                                    padding: '20px', 
+                                    textAlign: 'center', 
+                                    color: '#999',
+                                    backgroundColor: '#f8f9fa',
+                                    borderRadius: '6px',
+                                    border: '1px dashed #d9d9d9'
+                                }}>
+                                    📭 暂无课件
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
             </Modal>

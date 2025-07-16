@@ -77,6 +77,10 @@ const Homework = () => {
     // 班级选择弹窗状态
     const [classSelectModalVisible, setClassSelectModalVisible] = useState(false);
 
+    // 查看作业弹窗相关状态
+    const [viewModalVisible, setViewModalVisible] = useState(false);
+    const [viewingHomework, setViewingHomework] = useState<Homework | null>(null);
+
     // 删除作业 
     const handleDeleteHomework = (record: Homework) => {
         modal.confirm({
@@ -558,6 +562,15 @@ const Homework = () => {
                         }}
                     >
                         编辑
+                    </Button>
+                    <Button type="link" 
+                        size="small"
+                        style={{ color: '#1890ff' }}
+                        onClick={() => {
+                            setViewingHomework(record);
+                            setViewModalVisible(true);
+                        }}>
+                        查看
                     </Button>
                     <Button 
                         type="link" 
@@ -1361,7 +1374,6 @@ const Homework = () => {
                                     accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.jpg,.jpeg,.png"
                                     multiple
                                 >
-                                    <Button icon={<span>📁</span>}>添加附件</Button>
                                 </Upload>
                                 <div style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
                                     支持格式：PDF、Word文档、PPT、图片、文本文件等
@@ -1383,6 +1395,390 @@ const Homework = () => {
                                 </Space>
                             </Form.Item>
                         </Form>
+                    </div>
+                )}
+            </Modal>
+
+            {/* 查看作业详情弹窗 */}
+            <Modal
+                title={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>📋</span>
+                        <span>作业详情</span>
+                    </div>
+                }
+                open={viewModalVisible}
+                onCancel={() => {
+                    setViewModalVisible(false);
+                    setViewingHomework(null);
+                }}
+                footer={[
+                    <Button key="close" onClick={() => {
+                        setViewModalVisible(false);
+                        setViewingHomework(null);
+                    }}>
+                        关闭
+                    </Button>
+                ]}
+                width={700}
+                centered
+            >
+                {viewingHomework && (
+                    <div style={{ padding: '16px 0' }}>
+                        {/* 作业基本信息 */}
+                        <div style={{ marginBottom: '24px' }}>
+                            <div style={{ 
+                                padding: '16px', 
+                                backgroundColor: '#f8f9fa', 
+                                borderRadius: '8px',
+                                border: '1px solid #e9ecef'
+                            }}>
+                                <Row gutter={[16, 16]}>
+                                    <Col span={24}>
+                                        <div style={{ marginBottom: '12px' }}>
+                                            <Typography.Text strong style={{ fontSize: '16px', color: '#1890ff' }}>
+                                                作业名称：
+                                            </Typography.Text>
+                                            <Typography.Text style={{ fontSize: '16px', marginLeft: '8px' }}>
+                                                {viewingHomework.homework}
+                                            </Typography.Text>
+                                        </div>
+                                    </Col>
+                                    <Col span={12}>
+                                        <div style={{ marginBottom: '8px' }}>
+                                            <Typography.Text strong style={{ color: '#666' }}>
+                                                课程名称：
+                                            </Typography.Text>
+                                            <Typography.Text style={{ marginLeft: '8px' }}>
+                                                {viewingHomework.courseName || '未知课程'}
+                                            </Typography.Text>
+                                        </div>
+                                    </Col>
+                                    <Col span={12}>
+                                        <div style={{ marginBottom: '8px' }}>
+                                            <Typography.Text strong style={{ color: '#666' }}>
+                                                发布状态：
+                                            </Typography.Text>
+                                            <Tag color={viewingHomework.status === '已发布' ? 'success' : 'default'} style={{ marginLeft: '8px' }}>
+                                                {viewingHomework.status}
+                                            </Tag>
+                                        </div>
+                                    </Col>
+                                    <Col span={12}>
+                                        <div style={{ marginBottom: '8px' }}>
+                                            <Typography.Text strong style={{ color: '#666' }}>
+                                                创建时间：
+                                            </Typography.Text>
+                                            <Typography.Text style={{ marginLeft: '8px' }}>
+                                                {viewingHomework.createdAt ? dayjs(viewingHomework.createdAt).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                                            </Typography.Text>
+                                        </div>
+                                    </Col>
+                                    <Col span={12}>
+                                        <div style={{ marginBottom: '8px' }}>
+                                            <Typography.Text strong style={{ color: '#666' }}>
+                                                截止时间：
+                                            </Typography.Text>
+                                            <Typography.Text 
+                                                style={{ 
+                                                    marginLeft: '8px',
+                                                    color: viewingHomework.deadline && dayjs(viewingHomework.deadline).isBefore(dayjs()) ? '#ff4d4f' : '#666'
+                                                }}
+                                            >
+                                                {viewingHomework.deadline ? dayjs(viewingHomework.deadline).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                                            </Typography.Text>
+                                        </div>
+                                    </Col>
+                                </Row>
+                            </div>
+                        </div>
+
+                        {/* 作业内容 */}
+                        <div style={{ marginBottom: '24px' }}>
+                            <Typography.Title level={5} style={{ marginBottom: '12px', color: '#1890ff' }}>
+                                📝 作业内容
+                            </Typography.Title>
+                            <div style={{ 
+                                padding: '16px', 
+                                backgroundColor: '#fafafa', 
+                                borderRadius: '8px',
+                                border: '1px solid #d9d9d9',
+                                minHeight: '80px'
+                            }}>
+                                <Typography.Text style={{ 
+                                    whiteSpace: 'pre-wrap', 
+                                    lineHeight: '1.6',
+                                    color: viewingHomework.description ? '#333' : '#999'
+                                }}>
+                                    {viewingHomework.description || '暂无作业内容描述'}
+                                </Typography.Text>
+                            </div>
+                        </div>
+
+                        {/* 发布目标班级 */}
+                        <div style={{ marginBottom: '24px' }}>
+                            <Typography.Title level={5} style={{ marginBottom: '12px', color: '#1890ff' }}>
+                                🎯 发布目标班级
+                            </Typography.Title>
+                            <div style={{ 
+                                padding: '16px', 
+                                backgroundColor: viewingHomework.status === '已发布' ? '#f6ffed' : '#fff2f0', 
+                                borderRadius: '8px',
+                                border: viewingHomework.status === '已发布' ? '1px solid #b7eb8f' : '1px solid #ffccc7'
+                            }}>
+                                {viewingHomework.status === '已发布' ? (
+                                    <>
+                                        {/* 发布状态指示器 */}
+                                        <div style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            marginBottom: '16px',
+                                            padding: '8px 12px',
+                                            backgroundColor: '#fff',
+                                            borderRadius: '6px',
+                                            border: '1px solid #d9d9d9'
+                                        }}>
+                                            <div style={{ 
+                                                width: '8px', 
+                                                height: '8px', 
+                                                borderRadius: '50%', 
+                                                backgroundColor: '#52c41a', 
+                                                marginRight: '8px' 
+                                            }}></div>
+                                            <Typography.Text style={{ color: '#52c41a', fontWeight: 600, fontSize: '14px' }}>
+                                                已发布
+                                            </Typography.Text>
+                                        </div>
+                                        
+                                        {/* 当前发布班级 */}
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
+                                                当前发布班级：
+                                            </div>
+                                            <div style={{ 
+                                                padding: '12px', 
+                                                backgroundColor: '#fff', 
+                                                borderRadius: '6px',
+                                                border: '1px solid #d9d9d9',
+                                                marginBottom: '12px'
+                                            }}>
+                                                <Typography.Text style={{ color: '#52c41a', fontWeight: 600, fontSize: '16px' }}>
+                                                    {viewingHomework.className || '未知班级'}
+                                                </Typography.Text>
+                                                <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                                                    该作业已发布给此班级的所有学生
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* 发布时间 */}
+                                        <div style={{ 
+                                            padding: '8px 12px', 
+                                            backgroundColor: '#fff', 
+                                            borderRadius: '4px',
+                                            border: '1px solid #d9d9d9',
+                                            marginBottom: '12px'
+                                        }}>
+                                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
+                                                📅 发布时间：
+                                            </div>
+                                            <div style={{ fontSize: '13px', color: '#333', fontWeight: 500 }}>
+                                                {viewingHomework.createdAt ? dayjs(viewingHomework.createdAt).format('YYYY-MM-DD HH:mm:ss') : '未知'}
+                                            </div>
+                                        </div>
+                                        
+                                        {/* 发布说明 */}
+                                        <div style={{ 
+                                            padding: '8px 12px', 
+                                            backgroundColor: '#e6f7ff', 
+                                            borderRadius: '4px',
+                                            border: '1px solid #91d5ff'
+                                        }}>
+                                            <div style={{ fontSize: '12px', color: '#1890ff' }}>
+                                                ✅ 该作业已成功发布给 <strong>{viewingHomework.className || '未知班级'}</strong> 的所有学生
+                                            </div>
+                                            <div style={{ fontSize: '11px', color: '#666', marginTop: '4px' }}>
+                                                学生可以在"我的作业"界面查看和提交该作业
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        {/* 发布状态指示器 */}
+                                        <div style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            marginBottom: '16px',
+                                            padding: '8px 12px',
+                                            backgroundColor: '#fff',
+                                            borderRadius: '6px',
+                                            border: '1px solid #d9d9d9'
+                                        }}>
+                                            <div style={{ 
+                                                width: '8px', 
+                                                height: '8px', 
+                                                borderRadius: '50%', 
+                                                backgroundColor: '#ff4d4f', 
+                                                marginRight: '8px' 
+                                            }}></div>
+                                            <Typography.Text style={{ color: '#ff4d4f', fontWeight: 600, fontSize: '14px' }}>
+                                                未发布
+                                            </Typography.Text>
+                                        </div>
+                                        
+                                        {/* 可发布班级列表 */}
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
+                                                可发布班级：
+                                            </div>
+                                            <div style={{ 
+                                                maxHeight: '200px', 
+                                                overflowY: 'auto',
+                                                border: '1px solid #d9d9d9',
+                                                borderRadius: '6px',
+                                                backgroundColor: '#fff'
+                                            }}>
+                                                {allClasses.length === 0 ? (
+                                                    <div style={{ padding: '16px', textAlign: 'center', color: '#999' }}>
+                                                        暂无可用班级
+                                                    </div>
+                                                ) : (
+                                                    allClasses.map(classItem => (
+                                                        <div 
+                                                            key={classItem.id}
+                                                            style={{
+                                                                padding: '12px',
+                                                                borderBottom: '1px solid #f0f0f0',
+                                                                display: 'flex',
+                                                                justifyContent: 'space-between',
+                                                                alignItems: 'center',
+                                                                backgroundColor: classItem.id === (viewingHomework.coursePlanId || '') ? '#f6ffed' : '#fff'
+                                                            }}
+                                                        >
+                                                            <div>
+                                                                <div style={{ 
+                                                                    fontWeight: 600, 
+                                                                    fontSize: '14px',
+                                                                    color: classItem.id === (viewingHomework.coursePlanId || '') ? '#52c41a' : '#333'
+                                                                }}>
+                                                                    {classItem.name}
+                                                                </div>
+                                                                <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+                                                                    学生人数: {classItem.students?.length || 0} 人
+                                                                </div>
+                                                            </div>
+                                                            {classItem.id === (viewingHomework.coursePlanId || '') && (
+                                                                <Tag color="green">当前班级</Tag>
+                                                            )}
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+                                        </div>
+                                        
+                                        {/* 创建时间 */}
+                                        <div style={{ 
+                                            padding: '8px 12px', 
+                                            backgroundColor: '#fff', 
+                                            borderRadius: '4px',
+                                            border: '1px solid #d9d9d9',
+                                            marginBottom: '12px'
+                                        }}>
+                                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
+                                                📅 创建时间：
+                                            </div>
+                                            <div style={{ fontSize: '13px', color: '#333', fontWeight: 500 }}>
+                                                {viewingHomework.createdAt ? dayjs(viewingHomework.createdAt).format('YYYY-MM-DD HH:mm:ss') : '未知'}
+                                            </div>
+                                        </div>
+                                        
+                                        {/* 未发布说明 */}
+                                        <div style={{ 
+                                            padding: '8px 12px', 
+                                            backgroundColor: '#fff2f0', 
+                                            borderRadius: '4px',
+                                            border: '1px solid #ffccc7'
+                                        }}>
+                                            <div style={{ fontSize: '12px', color: '#ff4d4f' }}>
+                                                ⏸️ 该作业尚未发布，学生无法查看
+                                            </div>
+                                            <div style={{ fontSize: '11px', color: '#666', marginTop: '4px' }}>
+                                                请点击"发布"按钮将作业发布给目标班级的学生
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 作业附件 */}
+                        {viewingHomework.attachments && viewingHomework.attachments.length > 0 && (
+                            <div style={{ marginBottom: '24px' }}>
+                                <Typography.Title level={5} style={{ marginBottom: '12px', color: '#1890ff' }}>
+                                    📎 作业附件 ({viewingHomework.attachments.length})
+                                </Typography.Title>
+                                <div style={{ 
+                                    padding: '16px', 
+                                    backgroundColor: '#fff7e6', 
+                                    borderRadius: '8px',
+                                    border: '1px solid #ffd591'
+                                }}>
+                                    {viewingHomework.attachments.map((attachment, index) => (
+                                        <div key={index} style={{ 
+                                            padding: '12px', 
+                                            border: '1px solid #d9d9d9', 
+                                            borderRadius: '6px', 
+                                            marginBottom: '8px',
+                                            backgroundColor: '#fff',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center'
+                                        }}>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 500, color: '#333' }}>
+                                                    {attachment.name}
+                                                </div>
+                                                <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                                                    {attachment.fileName}
+                                                </div>
+                                            </div>
+                                            <Space>
+                                                <Button 
+                                                    size="small" 
+                                                    type="primary"
+                                                    onClick={() => window.open(`/api/attachment/view?key=${attachment.fileKey}`, '_blank')}
+                                                >
+                                                    预览
+                                                </Button>
+                                                <Button 
+                                                    size="small"
+                                                    onClick={() => {
+                                                        const link = document.createElement('a');
+                                                        link.href = `/api/attachment/view?key=${attachment.fileKey}&download=1`;
+                                                        link.download = attachment.fileName;
+                                                        link.click();
+                                                    }}
+                                                >
+                                                    下载
+                                                </Button>
+                                            </Space>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 操作提示 */}
+                        <div style={{ 
+                            padding: '12px', 
+                            backgroundColor: '#e6f7ff', 
+                            borderRadius: '6px',
+                            border: '1px solid #91d5ff'
+                        }}>
+                            <Typography.Text type="secondary" style={{ fontSize: '12px' }}>
+                                💡 提示：您可以点击"编辑"按钮修改作业内容，或点击"发布"按钮将此作业发布给学生
+                            </Typography.Text>
+                        </div>
                     </div>
                 )}
             </Modal>

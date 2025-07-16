@@ -290,45 +290,74 @@ const Homework = () => {
 
   const handleCheckAI = async (text: string) => {
     setAiLoading(true);
-    const response = await fetch('/api/ai/score', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messages: [
-          {
-            role: 'user',
-            content: text,
-          },
-        ],
-      }),
-    });
-    const data = await response.json();
-    if (data.code === 0) {
-      Modal.info({
-        title: 'AI 评分结果',
-        okText: '填充评分',
-        footer: null,
-        closable: true,
-        content: (
-          <Descriptions column={1}>
-            <Descriptions.Item label="评分">
-              {data.data.score}
-            </Descriptions.Item>
-            <Descriptions.Item label="评语">
-              <div
-                className="whitespace-pre-wrap"
-                dangerouslySetInnerHTML={{
-                  __html: md.render(data.data.comment),
-                }}
-              />
-            </Descriptions.Item>
-          </Descriptions>
-        ),
+    try {
+      const response = await fetch('/api/ai/score', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [
+            {
+              role: 'user',
+              content: text,
+            },
+          ],
+        }),
       });
+      
+      if (!response.ok) {
+        throw new Error(`API请求失败: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      if (data.code === 0) {
+        Modal.info({
+          title: 'AI 评分结果',
+          okText: '填充评分',
+          footer: null,
+          closable: true,
+          content: (
+            <Descriptions column={1}>
+              <Descriptions.Item label="评分">
+                {data.data.score}
+              </Descriptions.Item>
+              <Descriptions.Item label="评语">
+                <div
+                  className="whitespace-pre-wrap"
+                  dangerouslySetInnerHTML={{
+                    __html: md.render(data.data.comment),
+                  }}
+                />
+              </Descriptions.Item>
+            </Descriptions>
+          ),
+        });
+      } else {
+        throw new Error(data.msg || 'AI评分失败');
+      }
+    } catch (error) {
+      console.error('AI评分错误:', error);
+      Modal.error({
+        title: 'AI评分失败',
+        content: (
+          <div>
+            <p>AI评分功能暂时不可用，可能的原因：</p>
+            <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
+              <li>API密钥未配置或配置错误</li>
+              <li>网络连接问题</li>
+              <li>服务暂时不可用</li>
+            </ul>
+            <p style={{ marginTop: '8px', color: '#666' }}>
+              请手动进行评分，或联系管理员配置AI评分功能。
+            </p>
+          </div>
+        ),
+        okText: '我知道了'
+      });
+    } finally {
+      setAiLoading(false);
     }
-    setAiLoading(false);
   };
 
   useEffect(() => {

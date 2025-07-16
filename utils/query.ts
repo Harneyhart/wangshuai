@@ -110,6 +110,7 @@ export async function queryStudentByUserId(userId: string) {
       },
     });
   } catch (error) {
+    console.error('queryStudentByUserId error:', error);
     throw new Error('queryStudentByUserId error');
   }
 }
@@ -152,6 +153,7 @@ export async function queryTeachers() {
       },
     });
   } catch (error) {
+    console.error('queryTeachers error:', error);
     throw new Error('queryTeachers error');
   }
 }
@@ -169,6 +171,7 @@ export async function queryTeacherByUserId(userId: string) {
       },
     });
   } catch (error) {
+    console.error('queryTeacherByUserId error:', error);
     throw new Error('queryTeacherByUserId error');
   }
 }

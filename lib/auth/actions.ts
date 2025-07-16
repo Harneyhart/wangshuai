@@ -81,6 +81,7 @@ export async function login(
     sessionCookie.value,
     sessionCookie.attributes,
   );
+
   return redirect('/');
 }
 
@@ -107,46 +108,111 @@ export async function signup(
 
   const { name, email, password, type, real, classId } = parsed.data;
 
-  const existingUser = await db.query.users.findFirst({
-    where: (table, { eq, or }) =>
-      or(eq(table.name, name), eq(table.email, email)),
-    columns: { email: true, name: true },
+  // 分别检查用户名和邮箱是否已存在
+  const existingUserByName = await db.query.users.findFirst({
+    where: (table, { eq }) => eq(table.name, name),
+    columns: { name: true },
   });
 
-  if (existingUser) {
+  const existingUserByEmail = await db.query.users.findFirst({
+    where: (table, { eq }) => eq(table.email, email),
+    columns: { email: true },
+  });
+
+  if (existingUserByName) {
     return {
-      formError: '邮箱或用户名已存在',
+      fieldError: {
+        name: '用户名已存在',
+      },
+    };
+  }
+
+  if (existingUserByEmail) {
+    return {
+      fieldError: {
+        email: '邮箱已存在',
+      },
     };
   }
 
   const userId = generateId(21);
   const hashedPassword = await new Scrypt().hash(password);
-  const newUser = await db
-    .insert(users)
-    .values({
-      id: userId,
-      name,
-      email,
-      hashedPassword,
-    })
-    .returning();
-
-  // 如果 type 是 学生，那么创建一个学生
-  if (type === 'student' && real) {
-    const studentId = generateId(21);
-    await db.insert(students).values({
-      id: studentId,
-      name: real,
-      userId,
-    });
-
-    // 如果有 classId，那么加入班级
-    if (classId) {
-      await db.insert(studentsToClasses).values({
-        studentId,
-        classId,
+  
+  // 使用事务确保数据一致性
+  let newUser;
+  try {
+    newUser = await db.transaction(async (tx) => {
+      // 在事务中再次检查重复（防止并发注册）
+      const existingUserByNameInTx = await tx.query.users.findFirst({
+        where: (table, { eq }) => eq(table.name, name),
+        columns: { name: true },
       });
+
+      const existingUserByEmailInTx = await tx.query.users.findFirst({
+        where: (table, { eq }) => eq(table.email, email),
+        columns: { email: true },
+      });
+
+      if (existingUserByNameInTx) {
+        throw new Error('用户名已存在');
+      }
+
+      if (existingUserByEmailInTx) {
+        throw new Error('邮箱已存在');
+      }
+
+      // 创建用户
+      const user = await tx
+        .insert(users)
+        .values({
+          id: userId,
+          name,
+          email,
+          hashedPassword,
+        })
+        .returning();
+
+      // 如果 type 是 学生，那么创建一个学生
+      if (type === 'student' && real) {
+        const studentId = generateId(21);
+        await tx.insert(students).values({
+          id: studentId,
+          name: real,
+          userId,
+        });
+
+        // 如果有 classId，那么加入班级
+        if (classId) {
+          await tx.insert(studentsToClasses).values({
+            studentId,
+            classId,
+          });
+        }
+      }
+
+      return user;
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === '用户名已存在') {
+        return {
+          fieldError: {
+            name: '用户名已存在',
+          },
+        };
+      } else if (error.message === '邮箱已存在') {
+        return {
+          fieldError: {
+            email: '邮箱已存在',
+          },
+        };
+      }
     }
+    // 其他数据库错误
+    console.error('注册失败:', error);
+    return {
+      formError: '注册失败，请稍后重试',
+    };
   }
 
   const session = await lucia.createSession(userId, {
@@ -162,6 +228,7 @@ export async function signup(
     sessionCookie.value,
     sessionCookie.attributes,
   );
+
   return redirect('/');
 }
 export async function changePasswordByUser(

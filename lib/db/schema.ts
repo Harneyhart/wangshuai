@@ -137,10 +137,6 @@ export const teachers = pgTable('teachers', {
   }).$onUpdate(() => new Date()),
 });
 
-/**
- * - users <-> teachers -> 1-to-1
- * - courseHours <-> teachers -> N-to-N
- */
 export const teachersRelations = relations(teachers, ({ many, one }) => ({
   teachersToCourseHours: many(teachersToCourseHours),
   assistantsToCourseHours: many(assistantsToCourseHours),
