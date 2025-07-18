@@ -7,7 +7,7 @@ import {
   ProFormSelect,
   ProFormText,
 } from '@ant-design/pro-components';
-import { message, Popconfirm, Button, Table, Space, Tag } from 'antd';
+import { message, Popconfirm, Button, Table, Space, Tag, Input } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 
 import {
@@ -45,12 +45,15 @@ const StudentList = () => {
   const [currentStudent, setCurrentStudent] = useState<StudentsWithUser | null>(null);
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [filteredList, setFilteredList] = useState<StudentsWithUser[]>([]);
 
   const getData = async () => {
     setLoading(true);
     try {
       const data = await getAllStudents();
       setList(data);
+      setFilteredList(data);
     } catch (error) {
       console.error('获取学生数据失败:', error);
       message.error('获取学生数据失败');
@@ -114,6 +117,18 @@ const StudentList = () => {
     } catch (error) {
       console.error('重置密码失败:', error);
       message.error('重置密码失败');
+    }
+  };
+
+  // 搜索处理函数
+  const handleSearch = (value: string) => {
+    if (!value.trim()) {
+      setFilteredList(list);
+    } else {
+      const filtered = list.filter(student => 
+        student.name.toLowerCase().includes(value.toLowerCase())
+      );
+      setFilteredList(filtered);
     }
   };
 
@@ -235,7 +250,7 @@ const StudentList = () => {
   ];
 
   // 转换数据格式
-  const tableData: StudentTableItem[] = list.map((student, index) => ({
+  const tableData: StudentTableItem[] = filteredList.map((student, index) => ({
     key: student.id,
     id: student.id,
     name: student.name,
@@ -284,6 +299,17 @@ const StudentList = () => {
         borderRadius: 8,
         boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
       }}>
+        <div style={{ marginBottom: 16 }}>
+          <Input.Search
+            placeholder="请输入学生姓名进行搜索"
+            allowClear
+            enterButton="搜索"
+            size="middle"
+            style={{ width: 300 }}
+            onSearch={handleSearch}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
+        </div>
         <Table
           columns={columns}
           dataSource={tableData}
@@ -293,7 +319,12 @@ const StudentList = () => {
             pageSize: 10,
             showSizeChanger: true,
             showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 位学生`,
+            showTotal: (total, range) => {
+              if (searchText) {
+                return `显示第 ${range[0]}-${range[1]} 条，共 ${total} 条搜索结果`;
+              }
+              return `共 ${total} 位学生`;
+            },
             pageSizeOptions: ['10', '20', '50'],
           }}
           scroll={{ x: 1000 }}

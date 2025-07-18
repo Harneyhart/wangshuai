@@ -89,7 +89,7 @@ export default function StudentPasswordSettings() {
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-2xl mx-auto px-4">
-        <Card title="学生设置" className="shadow-lg">
+        <Card title="设置" className="shadow-lg">
           <div className="space-y-6">
             {/* 用户信息显示 */}
             <div className="bg-blue-50 p-4 rounded-lg">

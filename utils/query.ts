@@ -1459,6 +1459,16 @@ export async function queryAllAttachments() {
             },
           },
         },
+        submissionsToAttachments: {
+          with: {
+            submission: {
+              with: {
+                student: true,
+                homework: true,
+              },
+            },
+          },
+        },
       },
     });
     return res;

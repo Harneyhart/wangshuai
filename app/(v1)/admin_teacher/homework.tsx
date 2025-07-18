@@ -740,12 +740,6 @@ const Homework = () => {
                 )}
             </div>
             <Table
-                rowSelection={{
-                    type: 'checkbox',
-                    selectedRowKeys,
-                    onChange: onSelectChange,
-                    columnWidth: 50,
-                }}
                 columns={columns}
                 dataSource={filteredData}
                 pagination={{

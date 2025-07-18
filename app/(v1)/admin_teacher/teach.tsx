@@ -218,12 +218,19 @@ const Teach = () => {
             const attachments = await getAllAttachments();
             console.log('所有课件数据:', attachments);
             
-            // 过滤出当前教师相关的课件
+            // 过滤出当前教师相关的课件（只显示通过课程计划关联的，排除学生作业提交的附件）
             const teacherAttachments = attachments.filter((attachment: any) => {
+                // 检查是否通过课程计划关联（教师上传的课件）
                 const coursePlan = attachment.coursePlansToAttachments?.[0]?.coursePlan;
                 const isTeacherAttachment = coursePlan && teacherCoursePlanIds.includes(coursePlan.id);
-                console.log(`课件 ${attachment.name} 的课程计划ID: ${coursePlan?.id}, 是否属于当前教师: ${isTeacherAttachment}`);
-                return isTeacherAttachment;
+                
+                // 检查是否通过作业提交关联（学生上传的文件）
+                const hasSubmissionAttachment = attachment.submissionsToAttachments && attachment.submissionsToAttachments.length > 0;
+                
+                console.log(`课件 ${attachment.name}: 课程计划ID=${coursePlan?.id}, 是否属于当前教师=${isTeacherAttachment}, 是否有作业提交关联=${hasSubmissionAttachment}`);
+                
+                // 只返回通过课程计划关联且属于当前教师的附件，排除学生作业提交的附件
+                return isTeacherAttachment && !hasSubmissionAttachment;
             });
             
             console.log('当前教师的课件数据:', teacherAttachments);

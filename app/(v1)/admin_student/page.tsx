@@ -40,7 +40,7 @@ const Admin_Student = () => {
             label:(
                 <span>
                     <SettingOutlined />
-                    修改密码
+                    系统设置
                 </span>
             ),
             children: <StudentPasswordSettings />,

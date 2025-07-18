@@ -300,7 +300,7 @@ const ClassList = () => {
                                                     course.description?.includes('选修') ? 'blue' : 'green'
                                                 }>
                                                 </Tag> */}
-                                                <Tag color={course.isActive === 1 ? 'blue' : 'red'}>
+                                                <Tag color={course.isActive === 1 ? 'green' : 'red'}>
                                                     {course.isActive === 1 ? '启用' : '禁用'}
                                                 </Tag>
                                             </Space>

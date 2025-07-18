@@ -32,6 +32,7 @@ import Link from 'next/link';
 import UserList from './user';
 import StudentList from './student';
 import TeacherList from './teacher';
+import Backup from './backup';
 
 const Admin = ({
     searchParams,
@@ -59,9 +60,15 @@ const Admin = ({
           label: '老师管理',
           children: <TeacherList />,
         },
+        // {
+        //   key: 'backup',
+        //   label: '系统设置',
+        //   children: <Backup />,
+        // },
     ];
     return (
         <div>
+          
           <Tabs
             defaultActiveKey={searchParams?.tab}
             tabPosition="left"
@@ -70,6 +77,7 @@ const Admin = ({
           router.push(`/adminstator?tab=${key}`);
             }}
           />
+          {/* <a type="primary" style={{ marginLeft: '25px' }}>一键备份</a> */}
         </div>
       );
 };

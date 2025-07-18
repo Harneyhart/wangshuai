@@ -89,7 +89,7 @@ export default function StudentPasswordSettings() {
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-2xl mx-auto px-4">
-        <Card title="学生设置" className="shadow-lg">
+        <Card title="设置" className="shadow-lg">
           <div className="space-y-6">
             {/* 用户信息显示 */}
             <div className="bg-blue-50 p-4 rounded-lg">
@@ -113,6 +113,7 @@ export default function StudentPasswordSettings() {
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-gray-900 border-b pb-2">
                 账户设置
+                {/* <Button type="primary" style={{ marginTop: '20px' , marginLeft: '405px' }}>一键备份</Button> */}
               </h3>
               
               <div className="flex items-center justify-between p-4 bg-white border rounded-lg hover:bg-gray-50 transition-colors">

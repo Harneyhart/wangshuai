@@ -115,20 +115,19 @@ const HomeworkGradingPage = () => {
             // 设置总学生数
             setTotalStudentCount(studentCountResult.data.studentCount || 0);
             
-            // 如果API返回了按班级分组的数据，使用它；否则从提交数据中推断
+            // 如果API返回了按班级分组的数据，使用它
             if (studentCountResult.data.classCounts) {
               setClassStudentCounts(studentCountResult.data.classCounts);
-                         } else {
-               // 从提交数据中提取班级信息，假设每个班级大致相同的人数
-               const classes = Array.from(new Set(submissionData.map((item: GradingRecord) => item.className))).filter(Boolean) as string[];
-               const avgStudentsPerClass = classes.length > 0 ? Math.ceil((studentCountResult.data.studentCount || 0) / classes.length) : 0;
-               
-               const classCountsFromData: {[key: string]: number} = {};
-               classes.forEach(className => {
-                 classCountsFromData[className] = avgStudentsPerClass;
-               });
-               setClassStudentCounts(classCountsFromData);
-             }
+              console.log('按班级分组的学生数量:', studentCountResult.data.classCounts);
+            } else {
+              // 如果没有按班级分组的数据，创建一个默认的班级分组
+              console.warn('API未返回按班级分组的学生数量，使用默认分组');
+              const defaultClassCounts: {[key: string]: number} = {};
+              if (studentCountResult.data.className) {
+                defaultClassCounts[studentCountResult.data.className] = studentCountResult.data.studentCount || 0;
+              }
+              setClassStudentCounts(defaultClassCounts);
+            }
           } else {
             console.error('获取学生总数错误:', studentCountResult.error);
             setTotalStudentCount(0);
@@ -161,9 +160,9 @@ const HomeworkGradingPage = () => {
     let filtered = data;
 
     // 根据课程名称筛选
-    if (searchCourse) {
-      filtered = filtered.filter(item => item.courseName === searchCourse);
-    }
+    // if (searchCourse) {
+    //   filtered = filtered.filter(item => item.courseName === searchCourse);
+    // }
 
     // 根据班级名称筛选
     if (searchClass) {
@@ -475,11 +474,9 @@ const HomeworkGradingPage = () => {
       // 如果筛选了特定班级，返回该班级的学生数
       return classStudentCounts[searchClass] || 0;
     } else {
-      // 如果没有筛选班级，返回所有相关班级的学生总数
-      const relevantClasses = Array.from(new Set(data.map(item => item.className))).filter(Boolean) as string[];
-      return relevantClasses.reduce((total, className) => {
-        return total + (classStudentCounts[className] || 0);
-      }, 0);
+      // 如果没有筛选班级，返回所有发布该作业的班级的学生总数
+      // 从 classStudentCounts 中获取所有班级的学生数总和
+      return Object.values(classStudentCounts).reduce((total, count) => total + count, 0);
     }
   };
 
@@ -509,9 +506,13 @@ const HomeworkGradingPage = () => {
         <Col span={6}>
           <Card style={{ backgroundColor: '#f0f2f5' }}>
             <Statistic title="应交人数" value={expectedStudentCount} />
-            {(searchCourse || searchClass || searchStudent) && (
+            {searchClass ? (
               <div style={{ fontSize: '12px', color: '#1890ff', marginTop: '4px' }}>
-                {searchClass ? `(${searchClass} 班级)` : '(筛选后显示)'}
+                ({searchClass} 班级)
+              </div>
+            ) : (
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                (所有发布班级)
               </div>
             )}
           </Card>
@@ -576,9 +577,9 @@ const HomeworkGradingPage = () => {
         border: '1px solid #d9d9d9',
       }}>
         <Row gutter={[16, 16]} align="middle">
-          <Col xs={24} sm={8} md={6} lg={5}>
-            <div style={{ marginBottom: '8px', fontWeight: 500 }}>课程名称</div>
-            <Select
+          {/* <Col xs={24} sm={8} md={6} lg={5}> */}
+            {/* <div style={{ marginBottom: '8px', fontWeight: 500 }}>课程名称</div> */}
+            {/* <Select
               placeholder="请选择课程"
               value={searchCourse || undefined}
               onChange={setSearchCourse}
@@ -591,8 +592,8 @@ const HomeworkGradingPage = () => {
                   {option.label}
                 </Select.Option>
               ))}
-            </Select>
-          </Col>
+            </Select> */}
+          {/* </Col> */}
           <Col xs={24} sm={8} md={6} lg={5}>
             <div style={{ marginBottom: '8px', fontWeight: 500 }}>班级名称</div>
             <Select

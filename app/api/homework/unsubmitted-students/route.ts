@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { studentsToClasses, users, submissions, classes } from '@/lib/db/schema';
+import { studentsToClasses, students, submissions, classes } from '@/lib/db/schema';
 import { eq, and, notInArray } from 'drizzle-orm';
 
 // 获取指定作业的未提交学生列表
@@ -35,11 +35,11 @@ export async function GET(request: NextRequest) {
     const allStudentsInClass = await db
       .select({
         studentId: studentsToClasses.studentId,
-        studentName: users.name,
+        studentName: students.name,
         className: classes.name,
       })
       .from(studentsToClasses)
-      .innerJoin(users, eq(studentsToClasses.studentId, users.id))
+      .innerJoin(students, eq(studentsToClasses.studentId, students.id))
       .innerJoin(classes, eq(studentsToClasses.classId, classes.id))
       .where(eq(studentsToClasses.classId, classId));
 
