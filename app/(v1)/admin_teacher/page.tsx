@@ -19,16 +19,6 @@ import TeacherPasswordSettings from './set';
 const Admin_Teacher = () => {
     const items: TabsProps['items'] = [
         {
-            key: 'class',
-            label: (
-                <span>
-                    <BookOutlined />
-                    课程管理
-                </span>
-            ),
-            children: <ClassList />,
-        },
-        {
             key: 'teach',
             label: (
                 <span>
@@ -67,6 +57,16 @@ const Admin_Teacher = () => {
                 </span>
             ),
             children: <THomework />,
+        },
+        {
+            key: 'class',
+            label: (
+                <span>
+                    <BookOutlined />
+                    课程管理
+                </span>
+            ),
+            children: <ClassList />,
         },
         {
             key: 'set_password',
