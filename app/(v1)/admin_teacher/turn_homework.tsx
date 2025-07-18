@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
 import { App, Col, Row, Space, message, Button, Table, Tag, Modal, Input, Typography, Descriptions, List } from 'antd';
-import { getAllSubmissions, getAttachmentsByCoursePlanId } from '@/lib/course/actions';
+import { getSubmissionsForCurrentTeacher, getAttachmentsByCoursePlanId } from '@/lib/course/actions';
 import { SubmissionsWithRelations } from '@/lib/course/actions';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -53,7 +53,7 @@ const Homework = () => {
             try {
                 setLoading(true);
                 console.log('开始加载作业数据...');
-                const submissions = await getAllSubmissions();
+                const submissions = await getSubmissionsForCurrentTeacher();
                 console.log('获取到的作业提交数据:', submissions);
                 
                 // 按作业ID去重，统计每个作业的提交情况
@@ -110,7 +110,7 @@ const Homework = () => {
         try {
             setLoading(true);
             console.log('手动刷新作业数据...');
-            const submissions = await getAllSubmissions();
+            const submissions = await getSubmissionsForCurrentTeacher();
             console.log('刷新获取到的数据:', submissions);
             
             // 重新处理数据
@@ -187,7 +187,7 @@ const Homework = () => {
             }
 
             // 获取学生提交的附件（通过作业提交记录）
-            const submissions = await getAllSubmissions();
+            const submissions = await getSubmissionsForCurrentTeacher();
             const homeworkSubmissions = submissions.filter(sub => sub.homework?.id === homework.id);
             
             // 收集所有学生提交的附件

@@ -15,7 +15,7 @@ import {
   type SignupInput,
   type ChangePasswordInput,
 } from '@/lib/validators/auth';
-import { users, students, studentsToClasses } from '@/lib/db/schema';
+import { users, students, studentsToClasses, teachers } from '@/lib/db/schema';
 import { validateRequest } from '@/lib/auth/validate-request';
 
 export interface ActionResponse<T> {
@@ -188,6 +188,16 @@ export async function signup(
             classId,
           });
         }
+      }
+
+      // 如果 type 是 教师，那么创建一个教师
+      if (type === 'teacher' && real) {
+        const teacherId = generateId(21);
+        await tx.insert(teachers).values({
+          id: teacherId,
+          name: real,
+          userId,
+        });
       }
 
       return user;

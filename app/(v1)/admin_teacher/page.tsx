@@ -13,7 +13,8 @@ import Teach from './teach';
 import Group from './group';
 import Homework from './homework';
 import THomework from './turn_homework';
-import System from './sys';
+import System from './sys'; 
+import TeacherPasswordSettings from './set';
 
 const Admin_Teacher = () => {
     const items: TabsProps['items'] = [
@@ -67,6 +68,16 @@ const Admin_Teacher = () => {
             ),
             children: <THomework />,
         },
+        {
+            key: 'set_password',
+            label: (
+                <span>
+                    <SettingOutlined />
+                    修改密码
+                </span>
+            ),
+            children: <TeacherPasswordSettings />,
+        }
     //     {
     //         key: 'sys',
     //         label: (

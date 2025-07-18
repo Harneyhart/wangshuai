@@ -147,7 +147,11 @@ export async function queryTeachers() {
       with: {
         user: {
           columns: {
-            hashedPassword: false,
+            name: true,
+            hashedPassword: true,
+            email: true,
+            createdAt: true,
+            updatedAt: true
           },
         },
       },
@@ -165,7 +169,11 @@ export async function queryTeacherByUserId(userId: string) {
       with: {
         user: {
           columns: {
-            hashedPassword: false,
+            name: true,
+            hashedPassword: true,
+            email: true,
+            createdAt: true,
+            updatedAt: true
           },
         },
       },
@@ -681,6 +689,18 @@ export async function deleteStudentsToClassByClassId(classId: string) {
   } catch (error) {
     console.error(error);
     throw new Error('deleteStudentsToClassByClassId error');
+  }
+}
+// delete student to class by student id
+export async function deleteStudentsToClassByStudentId(studentId: string) {
+  try {
+    return await db
+      .delete(schema.studentsToClasses)
+      .where(eq(schema.studentsToClasses.studentId, studentId))
+      .returning();
+  } catch (error) {
+    console.error(error);
+    throw new Error('deleteStudentsToClassByStudentId error');
   }
 }
 // query all course plans

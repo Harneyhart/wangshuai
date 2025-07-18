@@ -21,7 +21,7 @@ export default async function LoginPage() {
     } else if (isStudent) {
       redirect('/admin_student');
     } else if (user.isAdmin) {
-      redirect('/admin');
+      redirect('/adminstator');
     } else {
       redirect('/');
     }

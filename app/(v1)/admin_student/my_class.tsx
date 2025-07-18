@@ -8,7 +8,7 @@ import { App, Col, Row, Space, Popconfirm, message, Button, Table, Tag, Modal, F
 import type { TableProps, MenuProps, UploadFile } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { getAllStudents, getAllCourses,getAllClasses, createClass, deleteClass, createCoursePlan, createHomework,  deleteCoursePlan,  createAttachment, getSubmissionsByHomeworkId, updateClassById, getClassesForStudent } from '@/lib/course/actions';
-import { UserItem, StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
+import { StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
 import { formConfig, renderFileViewLink } from '@/utils/utils';
 import { parseUploadFileToUpsertUploadFile } from '@/utils/utils';
 import Link from 'next/link';
@@ -364,7 +364,7 @@ const Classlist = () => {
                                                             >
                                                                 {fileName}
                                                             </a>
-                                                        </div>
+                        </div>
                                                         <div style={{ 
                                                             fontSize: '12px', 
                                                             color: '#666',
@@ -446,12 +446,12 @@ const Classlist = () => {
                                                              isPdfFile(fileName) ? '📄 预览' : 
                                                              isImageFile(fileName) ? '🖼️ 预览' : '📥 下载'}
                                                         </Button>
-                                                    </div>
-                                                </div>
+                                            </div>
+                                            </div>
                                             </div>
                                         );
                                     })}
-                                </div>
+                                        </div>
                             ) : (
                                 <div style={{ 
                                     padding: '20px', 
@@ -464,7 +464,7 @@ const Classlist = () => {
                                     📭 暂无课件
                                 </div>
                             )}
-                        </div>
+                            </div>
                     </div>
                 )}
             </Modal>

@@ -9,7 +9,7 @@ import { App, Col, Row, Space, Popconfirm, message, Button, Table, Tag, Modal, I
 import type { TableProps, MenuProps, UploadFile } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { getAllStudents, getAllCourses,getAllClasses, createClass, deleteClass, createCoursePlan, createHomework,  deleteCoursePlan,  createAttachment, getSubmissionsByHomeworkId, updateClassById, getHomeworksForStudent } from '@/lib/course/actions';
-import { UserItem, StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
+import { StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
 import { formConfig, renderFileViewLink } from '@/utils/utils';
 import { parseUploadFileToUpsertUploadFile } from '@/utils/utils';
 import Link from 'next/link';
@@ -419,11 +419,21 @@ const HomeWork = () => {
                 } else {
                     // 没有提交记录 - 显示未提交
                     return (
-                        <div >
-                            <div style={{ fontSize: '14px', color: '#999' }}>
-                                -
+                        <div style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center',
+                            padding: '0 8px'
+                          }}>
+                            <div style={{ 
+                            fontSize: '16px', 
+                            fontWeight: 'bold', 
+                            // color: record.score ? '#1890ff' : '#999',
+                            cursor: 'default'
+                            }}>
+                            {record.score || '-'} 
                             </div>
-                            <Tag color="gray" style={{ marginTop: 4 }}>
+                            <Tag color="default" style={{ margin: 0 }}>
                                 未提交
                             </Tag>
                         </div>

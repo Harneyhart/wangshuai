@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { courseId, classRoom, week, timeSlot, teacherIds } = body;
+    const { courseId, classRoom, week, timeSlot, teacherIds, startTime, endTime } = body;
 
     if (!courseId) {
       return NextResponse.json({ error: '缺少课程ID' }, { status: 400 });
@@ -169,8 +169,8 @@ export async function POST(request: NextRequest) {
         id: courseHourId,
         coursePlanId: coursePlan[0].id,
         classRoom: classRoom || '',
-        startTime: new Date('2024-01-01T08:00:00'), // 提供默认时间戳值
-        endTime: new Date('2024-01-01T10:00:00'),   // 提供默认时间戳值
+        startTime: startTime ? new Date(startTime) : new Date('2024-01-01T08:00:00'), // 使用传入的时间或默认值
+        endTime: endTime ? new Date(endTime) : new Date('2024-01-01T10:00:00'),       // 使用传入的时间或默认值
       })
       .returning();
 
@@ -224,10 +224,11 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { id, courseId, classRoom, week, timeSlot, teacherIds, col1, col2, col3, col4, col5, col6 } = body;
+    const { id, courseId, classRoom, week, timeSlot, teacherIds, col1, col2, col3, col4, col5, col6, startTime, endTime } = body;
 
     console.log('收到更新请求，ID:', id, '类型:', typeof id);
     console.log('完整请求数据:', body);
+    console.log('时间字段 - startTime:', startTime, 'endTime:', endTime);
 
     if (!id) {
       return NextResponse.json({ error: '缺少课程安排ID' }, { status: 400 });
@@ -326,14 +327,15 @@ export async function PUT(request: NextRequest) {
       }
     }
     
-    // 暂时跳过时间信息更新，因为数据库字段是time类型，需要运行migration脚本改为varchar
-    // TODO: 运行 scripts/migrate-course-hours-time-fields.sql 后可以恢复时间字段更新
-    // if (week !== undefined) {
-    //   updateData.startTime = week || '待安排'; // 存储周几
-    // }
-    // if (timeSlot !== undefined) {
-    //   updateData.endTime = timeSlot || '待安排'; // 存储具体时间
-    // }
+    // 处理时间信息更新
+    if (startTime !== undefined) {
+      updateData.startTime = startTime ? new Date(startTime) : new Date('2024-01-01T08:00:00');
+      console.log('设置开始时间:', updateData.startTime);
+    }
+    if (endTime !== undefined) {
+      updateData.endTime = endTime ? new Date(endTime) : new Date('2024-01-01T10:00:00');
+      console.log('设置结束时间:', updateData.endTime);
+    }
 
     if (Object.keys(updateData).length > 0) {
       updateData.updatedAt = new Date();

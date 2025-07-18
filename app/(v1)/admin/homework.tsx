@@ -291,48 +291,48 @@ const Homework = () => {
   const handleCheckAI = async (text: string) => {
     setAiLoading(true);
     try {
-      const response = await fetch('/api/ai/score', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [
-            {
-              role: 'user',
-              content: text,
-            },
-          ],
-        }),
-      });
+    const response = await fetch('/api/ai/score', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages: [
+          {
+            role: 'user',
+            content: text,
+          },
+        ],
+      }),
+    });
       
       if (!response.ok) {
         throw new Error(`API请求失败: ${response.status}`);
       }
       
-      const data = await response.json();
-      if (data.code === 0) {
-        Modal.info({
-          title: 'AI 评分结果',
-          okText: '填充评分',
-          footer: null,
-          closable: true,
-          content: (
-            <Descriptions column={1}>
-              <Descriptions.Item label="评分">
-                {data.data.score}
-              </Descriptions.Item>
-              <Descriptions.Item label="评语">
-                <div
-                  className="whitespace-pre-wrap"
-                  dangerouslySetInnerHTML={{
-                    __html: md.render(data.data.comment),
-                  }}
-                />
-              </Descriptions.Item>
-            </Descriptions>
-          ),
-        });
+    const data = await response.json();
+    if (data.code === 0) {
+      Modal.info({
+        title: 'AI 评分结果',
+        okText: '填充评分',
+        footer: null,
+        closable: true,
+        content: (
+          <Descriptions column={1}>
+            <Descriptions.Item label="评分">
+              {data.data.score}
+            </Descriptions.Item>
+            <Descriptions.Item label="评语">
+              <div
+                className="whitespace-pre-wrap"
+                dangerouslySetInnerHTML={{
+                  __html: md.render(data.data.comment),
+                }}
+              />
+            </Descriptions.Item>
+          </Descriptions>
+        ),
+      });
       } else {
         throw new Error(data.msg || 'AI评分失败');
       }
@@ -356,7 +356,7 @@ const Homework = () => {
         okText: '我知道了'
       });
     } finally {
-      setAiLoading(false);
+    setAiLoading(false);
     }
   };
 

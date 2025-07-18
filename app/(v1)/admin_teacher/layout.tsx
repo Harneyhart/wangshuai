@@ -7,9 +7,9 @@ const Layout = async ({ children }: React.PropsWithChildren) => {
   const { user } = await validateRequest();
   if (!user) redirect('/login');
   
-  // 判断是否是管理员，如果不是，跳转到首页
-  const isAdmin = user.isAdmin;
-  if (!user.isAdmin) {
+  // 判断是否是老师或管理员，如果不是，跳转到首页
+  const isTeacher = await checkIsTeacher(user.id);
+  if (!isTeacher && !user.isAdmin) {
     return (
       <div style={{
         display: 'flex',

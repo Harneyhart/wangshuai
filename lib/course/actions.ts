@@ -123,6 +123,12 @@ export type TeacherItem = {
   email: string;
 };
 
+export type UserItem = {
+  id: string;
+  name: string;
+  email: string;
+};
+
 export type UpsertUploadFileItem = (UploadFileItem & {
   name: string;
 })[];
@@ -487,7 +493,7 @@ export async function createTeacher(formData: CreateTeacherItem) {
   const data = await upsertTeacher({
     id,
     name,
-    userId: id, // 使用同一个ID作为userId
+    userId: id,
   });
   return data;
 }
@@ -502,7 +508,13 @@ export type TeachersWithUser = InferQueryModel<
     columns: { id: true; name: true };
     with: {
       user: {
-        columns: { hashedPassword: false };
+        columns: { 
+          name: true,
+          hashedPassword: true,
+          email: true,
+          createdAt: true,
+          updatedAt: true
+        };
       };
     };
   }
@@ -696,6 +708,8 @@ export async function createCourseHour(formData: CreateCourseHourItem) {
     );
     await upsertOperatorsToCourseHour(operatorsData);
   }
+  
+  return exist; // 返回创建的课程小时数据
 }
 // update course hour by id
 export type UpdateCourseHourItem = CreateCourseHourItem;
@@ -1520,4 +1534,346 @@ export const getAllAttachments = withAuth(async function () {
 // delete attachment by id
 export async function deleteAttachment(id: string) {
   return await deleteAttachmentById(id);
+}
+
+// 更新学生班级关系
+export async function updateStudentClasses(studentId: string, classIds: string[]) {
+  // 只添加新班级关系，不删除原有关系
+  if (classIds && classIds.length > 0) {
+    const data = classIds.map(classId => ({ studentId, classId }));
+    await upsertStudentsToClass(data);
+  }
+  return true;
+}
+
+// 获取当前教师的班级信息
+export async function getClassesForCurrentTeacher() {
+  const { user } = await validateRequest();
+  if (!user) {
+    return { error: '用户未登录' };
+  }
+
+  try {
+    // 获取当前教师信息
+    const teacher = await queryTeacherByUserId(user.id);
+    if (!teacher) {
+      return { error: '未找到教师信息' };
+    }
+
+    // 通过 teachers_to_course_hours -> course_hours -> course_plans -> classes 获取教师的班级
+    const teacherClasses = await db
+      .select({
+        id: schema.classes.id,
+        name: schema.classes.name,
+        createdAt: schema.classes.createdAt,
+        updatedAt: schema.classes.updatedAt,
+      })
+      .from(schema.teachersToCourseHours)
+      .innerJoin(schema.courseHours, eq(schema.teachersToCourseHours.courseHourId, schema.courseHours.id))
+      .innerJoin(schema.coursePlans, eq(schema.courseHours.coursePlanId, schema.coursePlans.id))
+      .innerJoin(schema.classes, eq(schema.coursePlans.classId, schema.classes.id))
+      .where(eq(schema.teachersToCourseHours.teacherId, teacher.id));
+
+    // 去重班级
+    const uniqueClasses = Array.from(
+      new Map(teacherClasses.map(item => [item.id, item])).values()
+    );
+
+    return uniqueClasses;
+  } catch (error) {
+    console.error('获取教师班级数据失败:', error);
+    return { error: '获取教师班级数据失败' };
+  }
+}
+
+// 获取当前教师的课程信息
+export async function getCoursesForCurrentTeacher() {
+  const { user } = await validateRequest();
+  if (!user) {
+    return { error: '用户未登录' };
+  }
+
+  try {
+    // 获取当前教师信息
+    const teacher = await queryTeacherByUserId(user.id);
+    if (!teacher) {
+      return { error: '未找到教师信息' };
+    }
+
+    // 通过 teachers_to_course_hours -> course_hours -> course_plans -> courses 获取教师的课程
+    const teacherCourses = await db
+      .select({
+        id: schema.courses.id,
+        name: schema.courses.name,
+        description: schema.courses.description,
+        createdAt: schema.courses.createdAt,
+        updatedAt: schema.courses.updatedAt,
+      })
+      .from(schema.teachersToCourseHours)
+      .innerJoin(schema.courseHours, eq(schema.teachersToCourseHours.courseHourId, schema.courseHours.id))
+      .innerJoin(schema.coursePlans, eq(schema.courseHours.coursePlanId, schema.coursePlans.id))
+      .innerJoin(schema.courses, eq(schema.coursePlans.courseId, schema.courses.id))
+      .where(eq(schema.teachersToCourseHours.teacherId, teacher.id));
+
+    // 去重课程
+    const uniqueCourses = Array.from(
+      new Map(teacherCourses.map(item => [item.id, item])).values()
+    );
+
+    return uniqueCourses;
+  } catch (error) {
+    console.error('获取教师课程数据失败:', error);
+    return { error: '获取教师课程数据失败' };
+  }
+}
+
+// 获取当前教师的作业信息
+export async function getHomeworksForCurrentTeacher() {
+  const { user } = await validateRequest();
+  if (!user) {
+    return { error: '用户未登录' };
+  }
+
+  try {
+    // 获取当前教师信息
+    const teacher = await queryTeacherByUserId(user.id);
+    if (!teacher) {
+      return { error: '未找到教师信息' };
+    }
+
+    // 方法1：通过 teachers_to_course_hours -> course_hours -> course_plans -> homeworks 获取已发布作业
+    const publishedHomeworks = await db
+      .select({
+        id: schema.homeworks.id,
+        name: schema.homeworks.name,
+        description: schema.homeworks.description,
+        deadline: schema.homeworks.deadline,
+        createdAt: schema.homeworks.createdAt,
+        isActive: schema.homeworks.isActive,
+        coursePlanId: schema.homeworks.coursePlanId,
+      })
+      .from(schema.teachersToCourseHours)
+      .innerJoin(schema.courseHours, eq(schema.teachersToCourseHours.courseHourId, schema.courseHours.id))
+      .innerJoin(schema.coursePlans, eq(schema.courseHours.coursePlanId, schema.coursePlans.id))
+      .innerJoin(schema.homeworks, eq(schema.coursePlans.id, schema.homeworks.coursePlanId))
+      .where(eq(schema.teachersToCourseHours.teacherId, teacher.id))
+      .orderBy(desc(schema.homeworks.createdAt));
+
+    // 方法2：直接获取教师相关的课程计划下的所有作业（包括未发布的）
+    const teacherCoursePlans = await db
+      .select({
+        coursePlanId: schema.coursePlans.id,
+      })
+      .from(schema.teachersToCourseHours)
+      .innerJoin(schema.courseHours, eq(schema.teachersToCourseHours.courseHourId, schema.courseHours.id))
+      .innerJoin(schema.coursePlans, eq(schema.courseHours.coursePlanId, schema.coursePlans.id))
+      .where(eq(schema.teachersToCourseHours.teacherId, teacher.id));
+
+    const teacherCoursePlanIds = teacherCoursePlans.map(cp => cp.coursePlanId);
+    
+    const allHomeworks = teacherCoursePlanIds.length > 0 ? await db
+      .select({
+        id: schema.homeworks.id,
+        name: schema.homeworks.name,
+        description: schema.homeworks.description,
+        deadline: schema.homeworks.deadline,
+        createdAt: schema.homeworks.createdAt,
+        isActive: schema.homeworks.isActive,
+        coursePlanId: schema.homeworks.coursePlanId,
+      })
+      .from(schema.homeworks)
+      .where(inArray(schema.homeworks.coursePlanId, teacherCoursePlanIds))
+      .orderBy(desc(schema.homeworks.createdAt)) : [];
+
+    // 合并两种方法的结果，去重
+    const allTeacherHomeworks = [...publishedHomeworks, ...allHomeworks];
+    const uniqueHomeworks = Array.from(
+      new Map(allTeacherHomeworks.map((h: any) => [h.id, h])).values()
+    );
+
+    // 获取课程和班级信息
+    const finalCoursePlanIds = Array.from(new Set(uniqueHomeworks.map((h: any) => h.coursePlanId).filter(Boolean)));
+    const coursePlans = finalCoursePlanIds.length > 0 ? await db.query.coursePlans.findMany({
+      where: (table, { inArray }) => inArray(table.id, finalCoursePlanIds),
+      with: {
+        course: true,
+        class: true,
+      },
+    }) : [];
+
+    return uniqueHomeworks.map((h: any) => {
+      const coursePlan = coursePlans.find(p => p.id === h.coursePlanId);
+      return {
+        key: h.id,
+        homework: h.name,
+        description: h.description,
+        status: h.isActive === 1 ? '已发布' : '未发布',
+        coursePlanId: h.coursePlanId,
+        courseName: coursePlan?.course?.name || '未知课程',
+        className: coursePlan?.class?.name || '未知班级',
+        createdAt: h.createdAt,
+        deadline: h.deadline,
+      };
+    });
+  } catch (error) {
+    console.error('获取教师作业数据失败:', error);
+    return { error: '获取教师作业数据失败' };
+  }
+}
+
+// 获取当前教师的课程计划信息
+export async function getCoursePlansForCurrentTeacher() {
+  const { user } = await validateRequest();
+  if (!user) {
+    return { error: '用户未登录' };
+  }
+
+  try {
+    // 获取当前教师信息
+    const teacher = await queryTeacherByUserId(user.id);
+    if (!teacher) {
+      return { error: '未找到教师信息' };
+    }
+
+    // 先获取该教师的课程小时ID
+    const teacherCourseHours = await db
+      .select({
+        coursePlanId: schema.courseHours.coursePlanId,
+      })
+      .from(schema.teachersToCourseHours)
+      .innerJoin(schema.courseHours, eq(schema.teachersToCourseHours.courseHourId, schema.courseHours.id))
+      .where(eq(schema.teachersToCourseHours.teacherId, teacher.id));
+
+    const coursePlanIds = teacherCourseHours.map(ch => ch.coursePlanId);
+
+    if (coursePlanIds.length === 0) {
+      return [];
+    }
+
+    // 获取这些课程计划的详细信息
+    const teacherCoursePlans = await db.query.coursePlans.findMany({
+      where: (table, { inArray }) => inArray(table.id, coursePlanIds),
+      with: {
+        course: true,
+        class: true,
+        attachments: {
+          with: {
+            attachment: true,
+          },
+        },
+      },
+    });
+
+    return teacherCoursePlans;
+  } catch (error) {
+    console.error('获取教师课程计划数据失败:', error);
+    return { error: '获取教师课程计划数据失败' };
+  }
+}
+
+// 重置学生密码
+export async function resetStudentPassword(studentId: string) {
+  const { session } = await validateRequest();
+  if (!session) {
+    throw new Error('Unauthorized');
+  }
+
+  // 查询学生信息
+  const student = await queryStudents();
+  const targetStudent = student.find(s => s.id === studentId);
+  if (!targetStudent) {
+    throw new Error('Student not found');
+  }
+  const hashedPassword = await new Scrypt().hash('123456789');
+  
+  // 更新用户密码
+  await db.update(schema.users)
+    .set({ hashedPassword })
+    .where(eq(schema.users.id, targetStudent.userId));
+
+  return { success: true };
+}
+
+// 重置教师密码
+export async function resetTeacherPassword(teacherId: string) {
+  const { session } = await validateRequest();
+  if (!session) {
+    throw new Error('Unauthorized');
+  }
+
+  // 查询教师信息
+  const teacher = await queryTeachers();
+  const targetTeacher = teacher.find(t => t.id === teacherId);
+  if (!targetTeacher) {
+    throw new Error('Teacher not found');
+  }
+
+  // 重置密码为 123456789
+  const hashedPassword = await new Scrypt().hash('123456789');
+  
+  // 更新用户密码
+  await db.update(schema.users)
+    .set({ hashedPassword })
+    .where(eq(schema.users.id, targetTeacher.userId));
+
+  return { success: true };
+}
+
+// 获取当前教师所教班级学生的作业提交
+export async function getSubmissionsForCurrentTeacher(): Promise<SubmissionsWithRelations[]> {
+  const { user } = await validateRequest();
+  if (!user) {
+    return [];
+  }
+
+  try {
+    // 获取当前教师信息
+    const teacher = await queryTeacherByUserId(user.id);
+    if (!teacher) {
+      return [];
+    }
+
+    // 获取教师所教的班级ID
+    const teacherClasses = await db
+      .select({
+        classId: schema.coursePlans.classId,
+      })
+      .from(schema.teachersToCourseHours)
+      .innerJoin(schema.courseHours, eq(schema.teachersToCourseHours.courseHourId, schema.courseHours.id))
+      .innerJoin(schema.coursePlans, eq(schema.courseHours.coursePlanId, schema.coursePlans.id))
+      .where(eq(schema.teachersToCourseHours.teacherId, teacher.id));
+
+    const teacherClassIds = Array.from(new Set(teacherClasses.map(c => c.classId)));
+
+    if (teacherClassIds.length === 0) {
+      return [];
+    }
+
+    // 获取这些班级的学生ID
+    const studentsInTeacherClasses = await db
+      .select({
+        studentId: schema.studentsToClasses.studentId,
+      })
+      .from(schema.studentsToClasses)
+      .where(inArray(schema.studentsToClasses.classId, teacherClassIds));
+
+    const studentIds = Array.from(new Set(studentsInTeacherClasses.map(s => s.studentId)));
+
+    if (studentIds.length === 0) {
+      return [];
+    }
+
+    // 获取所有提交记录，然后过滤出教师班级学生的提交
+    const allSubmissions = await querySubmissions();
+    
+    // 过滤出教师所教班级学生的提交
+    const teacherSubmissions = allSubmissions.filter(submission => 
+      studentIds.includes(submission.studentId)
+    );
+
+    return teacherSubmissions;
+  } catch (error) {
+    console.error('获取教师班级学生作业提交失败:', error);
+    return [];
+  }
 }

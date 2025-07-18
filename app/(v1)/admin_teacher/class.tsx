@@ -1,6 +1,6 @@
 'use client';
 
-// 课程管理页面(课程详情操作那里需要添加功能接口)
+// 课程管理页面
 import React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
@@ -10,7 +10,7 @@ import { App, Col, Row, Space, Popconfirm, message, Button, Table, Tag, Modal, F
 import type { TableProps, MenuProps, UploadFile } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { getAllStudents, getAllCourses, getAllClasses, createClass, deleteClass, createCoursePlan, createHomework, deleteCoursePlan, createAttachment, getSubmissionsByHomeworkId, updateClassById, createCourse, deleteCourse, deleteAttachment } from '@/lib/course/actions';
-import { UserItem, StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, CreateCourseItem } from '@/lib/course/actions';
+import { StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, CreateCourseItem } from '@/lib/course/actions';
 import { formConfig, renderFileViewLink } from '@/utils/utils';
 import { parseUploadFileToUpsertUploadFile } from '@/utils/utils';
 import Link from 'next/link';

@@ -6,12 +6,12 @@ import { ModalForm, ProFormText } from '@ant-design/pro-components';
 import { message, Popconfirm, Button, List } from 'antd';
 
 import { getAllUsers, createUser, deleteUser } from '@/lib/course/actions';
-import type { UserItem, CreateUserItem } from '@/lib/course/actions';
+import type { TeacherItem, CreateUserItem } from '@/lib/course/actions';
 import { formConfig } from '@/utils/utils';
 
 const UserList = () => {
   const formUserRef = useRef<ProFormInstance>();
-  const [list, setList] = useState<UserItem[]>([]);
+  const [list, setList] = useState<TeacherItem[]>([]);
   const [modalUserVisit, setModalUserVisit] = useState(false);
   const getData = async () => {
     const data = await getAllUsers();

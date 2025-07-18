@@ -24,11 +24,10 @@ const Page = async () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <Link
-          href="/admin"
+          href="/adminstator"
           className="p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
         >
           <h2 className="text-xl font-semibold mb-2">管理员</h2>
-          <p className="text-gray-600">系统管理功能</p>
         </Link>
 
         <Link
@@ -36,16 +35,14 @@ const Page = async () => {
           className="p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
         >
           <h2 className="text-xl font-semibold mb-2">教师端</h2>
-          <p className="text-gray-600">教师管理功能</p>
         </Link>
 
-        <Link
+                      <Link
           href="/admin_student"
           className="p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
-        >
+                      >
           <h2 className="text-xl font-semibold mb-2">学生端</h2>
-          <p className="text-gray-600">学生学习功能</p>
-        </Link>
+                      </Link>
       </div>
 
       {courseHours.length > 0 && (
@@ -70,11 +67,11 @@ const Page = async () => {
                   时间: {dayjs(courseHour.startTime).format('MM-DD HH:mm')} -{' '}
                   {dayjs(courseHour.endTime).format('HH:mm')}
                 </p>
-              </div>
-            ))}
+                    </div>
+                ))}
           </div>
-        </div>
-      )}
+          </div>
+        )}
     </div>
   );
 };

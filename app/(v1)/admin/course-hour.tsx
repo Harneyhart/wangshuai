@@ -85,7 +85,6 @@ import {
   deleteCourseHour,
 } from '@/lib/course/actions';
 import type {
-  UserItem,
   StudentsWithUser,
   TeachersWithUser,
   TeacherItem,

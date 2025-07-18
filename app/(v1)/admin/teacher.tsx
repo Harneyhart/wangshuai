@@ -18,7 +18,7 @@ import {
 import type {
   UserItem,
   TeachersWithUser,
-  TeacherItem,
+  CreateTeacherItem,
 } from '@/lib/course/actions';
 
 import { formConfig } from '@/utils/utils';
@@ -74,7 +74,7 @@ const TeacherList = () => {
         )}
       />
 
-      <ModalForm<TeacherItem>
+      <ModalForm<CreateTeacherItem>
         {...formConfig}
         formRef={formTeacherRef}
         open={modalTeacherVisit}

@@ -8,8 +8,8 @@ import { ModalForm, ProFormSelect, ProFormText, ProFormRadio, ProFormUploadDragg
 import { App, Col, Row, Space, Popconfirm, message, Button, Table, Tag, Modal, Form, Input, Select, Upload, Typography, Divider, Card, Pagination } from 'antd';
 import type { TableProps, MenuProps, UploadFile } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { getAllStudents, getAllCourses, getAttachmentsByCoursePlanId, getAllClasses, createClass, deleteClass, createCoursePlan, createHomework, deleteCoursePlan, createAttachment, getSubmissionsByHomeworkId, updateClassById, getAllCoursePlans, deleteCourse, getAllAttachments, deleteAttachment } from '@/lib/course/actions';
-import { UserItem, StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, SubmissionsWithRelations, CreateCourseItem } from '@/lib/course/actions';
+import { getAllStudents, getAllCourses, getAttachmentsByCoursePlanId, getAllClasses, createClass, deleteClass, createCoursePlan, createHomework, deleteCoursePlan, createAttachment, getSubmissionsByHomeworkId, updateClassById, getAllCoursePlans, deleteCourse, getAllAttachments, deleteAttachment, getCoursePlansForCurrentTeacher } from '@/lib/course/actions';
+import { StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, SubmissionsWithRelations, CreateCourseItem } from '@/lib/course/actions';
 import { formConfig, renderFileViewLink } from '@/utils/utils';
 import { parseUploadFileToUpsertUploadFile } from '@/utils/utils';
 import Link from 'next/link';
@@ -63,6 +63,7 @@ const Teach = () => {
     const [total, setTotal] = useState(0);
     const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
     const [coursePlans, setCoursePlans] = useState<any[]>([]);
+    const [currentTeacherCoursePlans, setCurrentTeacherCoursePlans] = useState<any[]>([]);
     
     // 新增搜索相关状态
     const [searchText, setSearchText] = useState(''); // 课件名称搜索
@@ -179,12 +180,55 @@ const Teach = () => {
         },
     ];
 
-    // 获取所有课件数据
+    // 获取当前教师的课程计划
+    const getCurrentTeacherCoursePlans = async () => {
+        try {
+            const result = await getCoursePlansForCurrentTeacher();
+            console.log('当前教师的课程计划:', result);
+            
+            // 检查是否返回错误
+            if (result && typeof result === 'object' && 'error' in result) {
+                console.error('获取当前教师课程计划失败:', result.error);
+                message.error(result.error);
+                return [];
+            }
+            
+            // 确保结果是数组
+            const teacherCoursePlans = Array.isArray(result) ? result : [];
+            setCurrentTeacherCoursePlans(teacherCoursePlans);
+            return teacherCoursePlans;
+        } catch (error) {
+            console.error('获取当前教师课程计划失败:', error);
+            message.error('获取当前教师课程计划失败');
+            return [];
+        }
+    };
+
+    // 获取当前教师相关的课件数据
     const getAttachmentData = async () => {
         try {
+            // 先获取当前教师的课程计划
+            const teacherCoursePlans = await getCurrentTeacherCoursePlans();
+            const teacherCoursePlanIds = teacherCoursePlans.map((plan:any) => plan.id);
+            
+            console.log('当前教师的课程计划ID:', teacherCoursePlanIds);
+            console.log('当前教师的课程计划详情:', teacherCoursePlans);
+            
+            // 获取所有课件数据
             const attachments = await getAllAttachments();
-            console.log('最新课件数据:', attachments);
-            const formattedAttachments: AttachmentItemWithId[] = attachments.map((attachment: any) => {
+            console.log('所有课件数据:', attachments);
+            
+            // 过滤出当前教师相关的课件
+            const teacherAttachments = attachments.filter((attachment: any) => {
+                const coursePlan = attachment.coursePlansToAttachments?.[0]?.coursePlan;
+                const isTeacherAttachment = coursePlan && teacherCoursePlanIds.includes(coursePlan.id);
+                console.log(`课件 ${attachment.name} 的课程计划ID: ${coursePlan?.id}, 是否属于当前教师: ${isTeacherAttachment}`);
+                return isTeacherAttachment;
+            });
+            
+            console.log('当前教师的课件数据:', teacherAttachments);
+            
+            const formattedAttachments: AttachmentItemWithId[] = teacherAttachments.map((attachment: any) => {
                 // 尝试从课程计划关联获取课程名称
                 const coursePlan = attachment.coursePlansToAttachments?.[0]?.coursePlan;
                 const courseName = coursePlan?.course?.name || ' ';
@@ -379,9 +423,9 @@ const Teach = () => {
     // 初始化加载数据
     useEffect(() => {
         getAttachmentData();
-        // 加载课程计划数据
+        // 加载课程计划数据（用于显示课程名称）
         getAllCoursePlans().then(setCoursePlans).catch(console.error);
-        // 加载课程数据
+        // 加载课程数据（用于显示课程名称）
         getAllCourses().then(setCourses).catch(console.error);
     }, []);
 
@@ -403,6 +447,17 @@ const Teach = () => {
                <Button type="primary" danger onClick={handleBatchDelete} disabled={selectedRowKeys.length === 0 }
                >
                    删除课件 ({selectedRowKeys.length})
+               </Button>
+               <Button 
+                   type="default" 
+                   onClick={async () => {
+                       // 临时显示所有课件（调试用）
+                       const attachments = await getAllAttachments();
+                       console.log('所有课件（不受权限限制）:', attachments);
+                       message.info(`共有 ${attachments.length} 个课件，当前显示 ${teachList.length} 个`);
+                   }}
+               >
+                   调试：查看所有课件
                </Button>
            </div>
 
@@ -545,10 +600,18 @@ const Teach = () => {
                    width="md"
                    required
                    showSearch={true}
-                   options={courses.map((course) => ({
-                       value: course.id,
-                       label: course.name,
-                   }))}
+                   options={(() => {
+                       // 从当前教师的课程计划中提取课程
+                       const teacherCourses = Array.from(
+                           new Map(
+                               currentTeacherCoursePlans.map(plan => [plan.course.id, plan.course])
+                           ).values()
+                       );
+                       return teacherCourses.map((course) => ({
+                           value: course.id,
+                           label: course.name,
+                       }));
+                   })()}
                    name="courseId"
                    placeholder="请选择课程（必填）"
                    fieldProps={{
@@ -566,11 +629,12 @@ const Teach = () => {
                    showSearch={true}
                    dependencies={['courseId']}
                    request={async (params) => {
-                       const data = await getAllCoursePlans();
+                       // 只显示当前教师的课程计划
+                       const teacherPlans = currentTeacherCoursePlans;
                        // 根据选择的课程过滤课程计划
                        const filteredPlans = selectedCourseId ? 
-                           data.filter(plan => plan.course.id === selectedCourseId) : 
-                           data;
+                           teacherPlans.filter(plan => plan.course.id === selectedCourseId) : 
+                           teacherPlans;
                        return filteredPlans.map((plan) => ({
                            value: plan.id,
                            label: `${plan.course.name} - ${plan.class.name}`,

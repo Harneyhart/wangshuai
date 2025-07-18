@@ -8,15 +8,15 @@ import { ModalForm, ProFormSelect, ProFormText, ProFormRadio, ProFormUploadDragg
 import { App, Col, Row, Space, Popconfirm, message, Button, Table, Tag, Modal, Form, Input, Select, Upload, Typography, Divider, Pagination, Checkbox } from 'antd';
 import type { TableProps, MenuProps, UploadFile } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { getAllStudents, getAllCourses, getAllClasses, createClass, deleteClass, createCoursePlan, createHomework,  deleteCoursePlan,  createAttachment, getSubmissionsByHomeworkId, updateClassById, getAllTeachers, getAllCourseHours } from '@/lib/course/actions';
-import { UserItem, StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
+import { getAllStudents, getAllCourses, getClassesForCurrentTeacher, createClass, deleteClass, createCoursePlan, createHomework,  deleteCoursePlan,  createAttachment, getSubmissionsByHomeworkId, updateClassById, getAllTeachers, getAllCourseHours } from '@/lib/course/actions';
+import { TeacherItem, StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
 import { formConfig, renderFileViewLink } from '@/utils/utils';
 import { parseUploadFileToUpsertUploadFile } from '@/utils/utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { queryCoursePlansByClassIdList } from '@/utils/query';
 
-type ClassWithTeachers = ClassesWithStudents & { teacherNames: string[] };
+type ClassWithTeachers = ClassesWithStudents & { teacherNames: string[]; studentCount?: number };
 
 type AttachmentItemWithId = CreateAttachmentItem & {
     id?: string;
@@ -81,43 +81,69 @@ const Group = () => {
     useEffect(() => {
         const fetchData = async () => {
             setLoading(true);
-            // 1. 获取所有班级
-            const classes = await getAllClasses();
-            // 2. 获取所有课时
-            const courseHours = await getAllCourseHours();
-            // 3. 获取所有教师
-            const teachersData = await getAllTeachers();
-            // 4. 获取所有学生
-            const studentsData = await getAllStudents();
-            
-            // 设置教师和学生数据
-            setTeachers(teachersData);
-            setStudents(studentsData);
-            
-            // 5. 聚合：为每个班级找出所有教师名字
-            const classWithTeachers = classes.map(cls => {
-                // 找到该班级的所有课时
-                const relatedCourseHours = courseHours.filter(
-                    ch => ch.plan?.class?.id === cls.id
-                );
-                // 课时下所有教师id
-                const teacherIds = relatedCourseHours
-                    .flatMap(ch => ch.teachers?.map(t => t.teacherId) || []);
-                // 去重
-                const uniqueTeacherIds = Array.from(new Set(teacherIds));
-                // 查找教师名字
-                const teacherNames = uniqueTeacherIds
-                    .map(tid => teachersData.find(t => t.id === tid)?.name)
-                    .filter(Boolean);
+            try {
+                // 1. 获取当前教师的班级
+                const classesResult = await getClassesForCurrentTeacher();
+                if (classesResult && typeof classesResult === 'object' && 'error' in classesResult) {
+                    message.error((classesResult as any).error);
+                    setLoading(false);
+                    return;
+                }
+                const classes = classesResult as ClassesWithStudents[];
+                
+                // 2. 获取所有课时
+                const courseHours = await getAllCourseHours();
+                // 3. 获取所有教师
+                const teachersData = await getAllTeachers();
+                // 4. 获取所有学生
+                const studentsData = await getAllStudents();
+                
+                // 设置教师和学生数据
+                setTeachers(teachersData);
+                setStudents(studentsData);
+                
+                // 5. 聚合：为每个班级找出所有教师名字和学生数量
+                const classWithTeachers = await Promise.all(classes.map(async (cls: ClassesWithStudents) => {
+                    // 找到该班级的所有课时
+                    const relatedCourseHours = courseHours.filter(
+                        ch => ch.plan?.class?.id === cls.id
+                    );
+                    // 课时下所有教师id
+                    const teacherIds = relatedCourseHours
+                        .flatMap(ch => ch.teachers?.map(t => t.teacherId) || []);
+                    // 去重
+                    const uniqueTeacherIds = Array.from(new Set(teacherIds));
+                    // 查找教师名字
+                    const teacherNames = uniqueTeacherIds
+                        .map(tid => teachersData.find(t => t.id === tid)?.name)
+                        .filter(Boolean);
 
-                return {
-                    ...cls,
-                    teacherNames,
-                };
-            });
+                    // 获取班级学生数量
+                    let studentCount = 0;
+                    try {
+                        const response = await fetch(`/api/classes/student-count?classId=${cls.id}`);
+                        if (response.ok) {
+                            const data = await response.json();
+                            studentCount = data.data.studentCount;
+                        }
+                    } catch (error) {
+                        console.error(`获取班级 ${cls.id} 学生数量失败:`, error);
+                    }
 
-            setGroupList(classWithTeachers as ClassWithTeachers[]);
-            setLoading(false);
+                    return {
+                        ...cls,
+                        teacherNames,
+                        studentCount,
+                    };
+                }));
+
+                setGroupList(classWithTeachers as ClassWithTeachers[]);
+            } catch (error) {
+                console.error('获取班级数据失败:', error);
+                message.error('获取班级数据失败');
+            } finally {
+                setLoading(false);
+            }
         };
         fetchData();
     }, []);
@@ -562,7 +588,7 @@ const Group = () => {
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                                         <div>班主任：{(item as any).teacherNames?.join('、') || '未分配'}</div>
-                                        <div>人数：{item.students ? item.students.length : 0}人</div>
+                                        <div>人数：{item.studentCount || 0}人</div>
                                     </div>
                                 </div>
                                 <div style={{ marginTop: 16, width: '100%' }}>

@@ -316,8 +316,8 @@ export const courseHours = pgTable('course_hours', {
   coursePlanId: varchar('course_plan_id', { length: 255 }).notNull(),
   classRoom: varchar('class_room', { length: 255 }).notNull(),
   // teacherId: varchar('teacher_id', { length: 255 }).notNull(),
-  startTime: timestamp('start_time'), // 存储周几，如"周一"
-  endTime: timestamp('end_time'), // 存储时间段，如"上午1-2节"
+  startTime: timestamp('start_time').notNull(), // 开始时间
+  endTime: timestamp('end_time').notNull(), // 结束时间
   isActive: smallint('is_active').default(1),
   createdAt: timestamp('created_at', {
     withTimezone: true,

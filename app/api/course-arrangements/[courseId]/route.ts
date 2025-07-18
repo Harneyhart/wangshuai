@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { courseHours, teachersToCourseHours, assistantsToCourseHours, operatorsToCourseHours, coursePlans, courses, teachers, classes } from '@/lib/db/schema';
-import { eq, and, asc } from 'drizzle-orm';
+import { courseHours, teachersToCourseHours, assistantsToCourseHours, operatorsToCourseHours, coursePlans, courses, teachers, classes, coursePlansToAttachments, attachments } from '@/lib/db/schema';
+import { eq, and, asc, inArray } from 'drizzle-orm';
 
 // 获取特定课程的安排
 export async function GET(
@@ -63,9 +63,9 @@ export async function GET(
         const assistant = assistants[0]?.teacherName || '';
 
         // 处理时间显示
-        // start_time存储周几，end_time存储具体时间
-        const weekDay = arrangement.startTime || '';
-        const timeSlot = arrangement.endTime || '';
+        // startTime和endTime都是timestamp类型，直接使用
+        const startTime = arrangement.startTime;
+        const endTime = arrangement.endTime;
 
         // 处理占位符班级显示
         const className = arrangement.className || '';
@@ -79,12 +79,12 @@ export async function GET(
           col3: experimentTeacher,         // 实验教师
           col4: assistant,                 // 助教
           col5: arrangement.classRoom,     // 教室
-          col6: `${weekDay} ${timeSlot}`,  // 上课时间
+          col6: '',                        // 上课时间（由前端处理显示）
           col7: '',
           col8: '',
           col9: '',
-          week: weekDay,                   // 单独的星期字段
-          timeSlot: timeSlot,             // 单独的时间段字段
+          startTime: startTime,            // 开始时间
+          endTime: endTime,                // 结束时间
         };
       })
     );
@@ -149,7 +149,34 @@ export async function DELETE(
       .limit(1);
 
     if (remainingCourseHours.length === 0) {
-      // 没有其他课程安排使用此计划，删除课程计划
+      // 没有其他课程安排使用此计划，需要删除课程计划
+      // 但先要删除与该课程计划关联的课件
+      
+      // 1. 获取该课程计划关联的所有课件
+      const coursePlanAttachments = await db
+        .select({
+          attachmentId: coursePlansToAttachments.attachmentId,
+        })
+        .from(coursePlansToAttachments)
+        .where(eq(coursePlansToAttachments.coursePlanId, coursePlanId));
+
+      if (coursePlanAttachments.length > 0) {
+        const attachmentIds = coursePlanAttachments.map(att => att.attachmentId);
+        
+        // 2. 删除课程计划与课件的关联关系
+        await db
+          .delete(coursePlansToAttachments)
+          .where(eq(coursePlansToAttachments.coursePlanId, coursePlanId));
+        
+        // 3. 删除课件本身
+        await db
+          .delete(attachments)
+          .where(inArray(attachments.id, attachmentIds));
+        
+        console.log('已删除课程计划关联的课件:', attachmentIds);
+      }
+      
+      // 4. 最后删除课程计划
       await db
         .delete(coursePlans)
         .where(eq(coursePlans.id, coursePlanId));

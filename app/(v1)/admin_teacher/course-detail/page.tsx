@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Typography, Card, Spin, App, Button, Modal, Form, Input, Select, message, Space, Popconfirm } from 'antd';
+import { Typography, Card, Spin, App, Button, Modal, Form, Input, Select, message, Space, Popconfirm, TimePicker } from 'antd';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { getAllCourses } from '@/lib/course/actions';
 import { ArrowLeftOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -32,26 +33,7 @@ const CourseDetail = () => {
     const [classes, setClasses] = useState<any[]>([]);
     const [teachers, setTeachers] = useState<any[]>([]);
 
-    // 时间选择选项（仅用于前端显示，暂不保存到数据库）
-    const weekOptions = [
-        { label: '星期一', value: '星期一' },
-        { label: '星期二', value: '星期二' },
-        { label: '星期三', value: '星期三' },
-        { label: '星期四', value: '星期四' },
-        { label: '星期五', value: '星期五' },
-        { label: '星期六', value: '星期六' },
-        { label: '星期日', value: '星期日' },
-    ];
 
-    const timeSlotOptions = [
-        { label: '上午1-2节', value: '上午1-2节' },
-        { label: '上午3-4节', value: '上午3-4节' },
-        { label: '下午1-2节', value: '下午1-2节' },
-        { label: '下午3-4节', value: '下午3-4节' },
-        { label: '下午5-6节', value: '下午5-6节' },
-        { label: '晚上1-2节', value: '晚上1-2节' },
-        { label: '晚上3-4节', value: '晚上3-4节' },
-    ];
 
     // 定义表格数据（从数据库动态获取）
     const [tableData, setTableData] = useState<any[]>([]);
@@ -80,8 +62,8 @@ const CourseDetail = () => {
                         body: JSON.stringify({
                             courseId: courseId,
                             classRoom: '',
-                            week: '',
-                            timeSlot: '',
+                            startTime: new Date('2024-01-01T08:00:00').toISOString(),
+                            endTime: new Date('2024-01-01T10:00:00').toISOString(),
                             teacherIds: {
                                 theory: null,
                                 experiment: null,
@@ -121,8 +103,8 @@ const CourseDetail = () => {
         }
         
         modal.confirm({
-            title: '确认批量硬删除',
-            content: `确定要彻底删除选中的 ${selectedKeys.length} 行课程安排吗？这是硬删除操作，将完全从数据库中移除，无法恢复！`,
+            title: '确认批量删除',
+            content: `确定要彻底删除选中的 ${selectedKeys.length} 行课程安排吗？这是删除操作，将完全从数据库中移除，无法恢复！`,
             async onOk() {
                 try {
                     // 获取选中的行数据
@@ -188,8 +170,8 @@ const CourseDetail = () => {
             col3: row.col3,        // 实验教师
             col4: row.col4,        // 助教
             col5: row.col5,        // 教室
-            week: row.week,        // 星期（仅前端显示）
-            timeSlot: row.timeSlot // 时间段（仅前端显示）
+            startTime: row.startTime ? dayjs(row.startTime) : null,  // 开始时间
+            endTime: row.endTime ? dayjs(row.endTime) : null          // 结束时间
         });
         setEditModalVisible(true);
     };
@@ -219,9 +201,9 @@ const CourseDetail = () => {
                 col3: values.col3, // 实验教师
                 col4: values.col4, // 助教
                 col5: values.col5, // 教室
-                // 时间信息（仅前端显示，暂不保存到数据库）
-                week: values.week, // 周几
-                timeSlot: values.timeSlot, // 具体时间
+                // 时间信息
+                startTime: values.startTime ? values.startTime.toISOString() : null, // 开始时间
+                endTime: values.endTime ? values.endTime.toISOString() : null,       // 结束时间
                 // 添加教师ID信息
                 teacherIds: {
                     theory: values.col2 ? getTeacherId(values.col2) : null,      // 理论教师ID
@@ -254,7 +236,7 @@ const CourseDetail = () => {
                 setEditModalVisible(false);
                 setEditingRow(null);
                 editForm.resetFields();
-                message.success('课程安排保存成功！班级、教师、教室信息已同步到数据库');
+                message.success('课程安排保存成功！班级、教师、教室、时间信息已同步到数据库');
             } else {
                 const errorData = await response.json();
                 console.error('编辑失败:', errorData);
@@ -669,7 +651,10 @@ const CourseDetail = () => {
                                             <td style={{ border: '1px solid #eee', padding: 8, width: '80px' }}>{row.col4}</td>
                                             <td style={{ border: '1px solid #eee', padding: 8, width: '100px' }}>{row.col5}</td>
                                             <td style={{ border: '1px solid #eee', padding: 8, width: '200px' }}>
-                                                {(row as any).week && (row as any).timeSlot ? `${(row as any).week} ${(row as any).timeSlot}` : (row.col6 || '')}
+                                                {row.startTime && row.endTime ? 
+                                                    `${dayjs(row.startTime).format('HH:mm')} - ${dayjs(row.endTime).format('HH:mm')}` : 
+                                                    '未设置时间'
+                                                }
                                             </td>
                                             <td style={{ border: '1px solid #eee', padding: 8, width: '120px', textAlign: 'center' }}>
                                                 <Space size="small">
@@ -764,7 +749,7 @@ const CourseDetail = () => {
                             <Form.Item
                                 label="理论教师"
                                 name="col2"
-                                rules={[{ required: true, message: '请选择理论教师' }]}
+                                rules={[{  message: '请选择理论教师' }]}
                             >
                                 <Select placeholder="请选择理论教师" showSearch optionFilterProp="children">
                                     {teachers.map(teacher => (
@@ -798,31 +783,33 @@ const CourseDetail = () => {
                             >
                                 <Input placeholder="请输入教室（如：A101、实验楼B305等）" />
                             </Form.Item>
-                            {/* 时间选择器（暂时禁用，需要运行数据库migration脚本） */}
+                            {/* 时间选择器 */}
                             <div style={{ display: 'flex', gap: 16 }}>
                                 <Form.Item
-                                    label="选择星期"
-                                    name="week"
+                                    label="开始时间"
+                                    name="startTime"
                                     style={{ flex: 1 }}
-                                    help="时间功能暂不可用，需要运行数据库migration脚本"
+                                    rules={[{ required: true, message: '请选择开始时间' }]}
                                 >
-                                    <Select placeholder="暂不可用" disabled>
-                                        {weekOptions.map(option => (
-                                            <Option key={option.value} value={option.value}>{option.label}</Option>
-                                        ))}
-                                    </Select>
+                                    <TimePicker 
+                                        format="HH:mm" 
+                                        placeholder="选择开始时间"
+                                        minuteStep={5}
+                                        showNow={false}
+                                    />
                                 </Form.Item>
                                 <Form.Item
-                                    label="上课时间"
-                                    name="timeSlot"
+                                    label="结束时间"
+                                    name="endTime"
                                     style={{ flex: 1 }}
-                                    help="时间功能暂不可用，需要运行数据库migration脚本"
+                                    rules={[{ required: true, message: '请选择结束时间' }]}
                                 >
-                                    <Select placeholder="暂不可用" disabled>
-                                        {timeSlotOptions.map(option => (
-                                            <Option key={option.value} value={option.value}>{option.label}</Option>
-                                        ))}
-                                    </Select>
+                                    <TimePicker 
+                                        format="HH:mm" 
+                                        placeholder="选择结束时间"
+                                        minuteStep={5}
+                                        showNow={false}
+                                    />
                                 </Form.Item>
                             </div>
                         </Form>

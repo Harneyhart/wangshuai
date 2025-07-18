@@ -11,6 +11,7 @@ import Link from 'next/link';
 
 import Classlist from './my_class';
 import HomeWork from './my_homework';
+import StudentPasswordSettings from './set';
 
 const Admin_Student = () => {
     const items: TabsProps['items'] = [
@@ -33,6 +34,16 @@ const Admin_Student = () => {
                 </span>
             ),
             children: <HomeWork />,
+        },
+        {
+            key: 'set_password',
+            label:(
+                <span>
+                    <SettingOutlined />
+                    修改密码
+                </span>
+            ),
+            children: <StudentPasswordSettings />,
         }
     ];
     return (

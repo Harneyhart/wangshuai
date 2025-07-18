@@ -8,8 +8,8 @@ import { ModalForm, ProFormSelect, ProFormText, ProFormRadio, ProFormUploadDragg
 import { App, Col, Row, Space, Popconfirm, message, Button, Table, Tag, Modal, Form, Input, Select, Upload, Typography, Divider, Pagination, DatePicker } from 'antd';
 import type { TableProps, MenuProps, UploadFile } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { getAllStudents, getAllCourses,getAllClasses, createClass, deleteClass, createCoursePlan, createHomework,  deleteCoursePlan,  createAttachment, getSubmissionsByHomeworkId, updateClassById, getHomeworksForTeacher, getAllCoursePlans, updateHomeworkById, deleteHomework } from '@/lib/course/actions';
-import { UserItem, StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
+import { getAllStudents, getAllCourses,getAllClasses, createClass, deleteClass, createCoursePlan, createHomework,  deleteCoursePlan,  createAttachment, getSubmissionsByHomeworkId, updateClassById, getHomeworksForCurrentTeacher, getAllCoursePlans, updateHomeworkById, deleteHomework, getCoursePlansForCurrentTeacher, getCoursesForCurrentTeacher } from '@/lib/course/actions';
+import { StudentsWithUser, CoursesWithPlan, CreateClassItem, UpdateClassItem, ClassesWithStudents, CreateCoursePlanItem, CreateHomeworkItem, CreateAttachmentItem, SubmissionsWithRelations, } from '@/lib/course/actions';
 import { formConfig, renderFileViewLink } from '@/utils/utils';
 import { parseUploadFileToUpsertUploadFile } from '@/utils/utils';
 
@@ -139,8 +139,9 @@ const Homework = () => {
 
     const [coursePlans, setCoursePlans] = useState<any[]>([]);
     const [selectedCoursePlanId, setSelectedCoursePlanId] = useState<string>();
-    const [courses, setCourses] = useState<CoursesWithPlan[]>([]);
-    const [selectedCourseId, setSelectedCourseId] = useState<string>();
+    // 移除不需要的courses和selectedCourseId状态
+    // const [courses, setCourses] = useState<CoursesWithPlan[]>([]);
+    // const [selectedCourseId, setSelectedCourseId] = useState<string>();
     
     // 搜索相关状态
     const [courseSearchText, setCourseSearchText] = useState('');
@@ -276,15 +277,21 @@ const Homework = () => {
     useEffect(() => {
         const fetchHomeworks = async () => {
             setLoading(true);
-            const result = await getHomeworksForTeacher();
+            console.log('开始获取作业列表...');
+            const result = await getHomeworksForCurrentTeacher();
+            console.log('获取作业列表结果:', result);
+            
             if (Array.isArray(result)) {
-                setData(result.map(item => ({
+                const mappedData = result.map(item => ({
                     ...item,
                     createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
                     deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
-                    attachments: item.attachments || [],
-                })));
+                    // attachments: item.attachments || [],
+                }));
+                console.log('映射后的作业数据:', mappedData);
+                setData(mappedData);
             } else if (result.error) {
+                console.error('获取作业列表错误:', result.error);
                 message.error(result.error);
             }
             setLoading(false);
@@ -295,9 +302,19 @@ const Homework = () => {
 
     useEffect(() => {
         const fetchCoursePlans = async () => {
-            const plans = await getAllCoursePlans();
-            setCoursePlans(plans);
-            if (plans.length > 0) setSelectedCoursePlanId(plans[0].id);
+            // 获取当前教师的课程计划，而不是所有课程计划
+            console.log('开始获取教师课程计划...');
+            const plans = await getCoursePlansForCurrentTeacher();
+            console.log('获取课程计划结果:', plans);
+            
+            if (Array.isArray(plans)) {
+                setCoursePlans(plans);
+                if (plans.length > 0) setSelectedCoursePlanId(plans[0].id);
+                console.log('设置课程计划:', plans);
+            } else if (plans.error) {
+                console.error('获取课程计划错误:', plans.error);
+                message.error(plans.error);
+            }
         };
         
         const fetchClasses = async () => {
@@ -306,8 +323,13 @@ const Homework = () => {
         };
         
         const fetchCourses = async () => {
-            const coursesData = await getAllCourses();
-            setCourses(coursesData);
+            // 获取当前教师的课程，而不是所有课程
+            const coursesData = await getCoursesForCurrentTeacher();
+            if (Array.isArray(coursesData)) {
+                // setCourses(coursesData); // This line is removed as per the edit hint
+            } else if (coursesData.error) {
+                message.error(coursesData.error);
+            }
         };
         
         fetchCoursePlans();
@@ -321,9 +343,6 @@ const Homework = () => {
 
     const hasSelected = selectedRowKeys.length > 0;
 
-    const handleDelete = () => {
-        // ... existing code ...
-    };
 
     const columns = [
         {
@@ -776,20 +795,22 @@ const Homework = () => {
                     layout="vertical"
                     onFinish={async (values) => {
                         // 新增作业模板逻辑
-                        if (!values.courseId) {
-                            message.error('请选择课程');
+                        if (!values.coursePlanId) {
+                            message.error('请选择课程计划');
                             return;
                         }
                         
                         // 查找该课程对应的第一个课程计划作为模板
-                        const selectedCoursePlans = coursePlans.filter(plan => plan.course?.id === values.courseId);
-                        if (selectedCoursePlans.length === 0) {
-                            message.error('所选课程暂无对应的课程计划，请先创建课程计划');
+                        const selectedCoursePlan = coursePlans.find(plan => plan.id === values.coursePlanId);
+                        if (!selectedCoursePlan) {
+                            message.error('所选课程计划不存在，请重新选择');
                             return;
                         }
                         
+                        console.log('创建作业 - 选择的课程计划:', selectedCoursePlan);
+                        
                         const homeworkData = {
-                            coursePlanId: selectedCoursePlans[0].id,
+                            coursePlanId: selectedCoursePlan.id,
                             name: values.homework,
                             description: values.description,
                             order: data.length + 1,
@@ -797,89 +818,105 @@ const Homework = () => {
                             isActive: 0, // 默认设置为未发布状态
                         };
                         
-                        const res = await createHomework(homeworkData);
-                        if (res && res.length > 0) {
-                            // 如果有上传文件，创建附件
-                            if (uploadFiles.length > 0) {
-                                try {
-                                    for (const file of uploadFiles) {
-                                        const formData = new FormData();
-                                        formData.append('file', file.originFileObj as File);
-                                        
-                                                                                // 上传文件
-                                        const uploadResponse = await fetch('/api/upload', {
-                                            method: 'POST',
-                                            body: formData,
-                                        });
-                                        
-                                        if (uploadResponse.ok) {
-                                            const uploadResult = await uploadResponse.json();
-                                            console.log('文件上传结果:', uploadResult);
-                                            
-                                            if (uploadResult.status === 'success' && uploadResult.data) {
-                                                // 创建附件记录，关联到课程计划
-                                                const attachmentData = {
-                                                    name: file.name,
-                                                    coursePlanId: selectedCoursePlans[0].id, // 关联到课程计划
-                                                    attachments: [{
-                                                        name: file.name,
-                                                        fileName: uploadResult.data.fileName,
-                                                        fileKey: uploadResult.data.fileKey,
-                                                    }],
-                                                };
-                                                
-                                                await createAttachment(attachmentData);
-                                            } else {
-                                                console.error('文件上传失败:', uploadResult.error);
-                                                throw new Error(`文件 ${file.name} 上传失败`);
-                                            }
-                                        } else {
-                                            throw new Error(`文件 ${file.name} 上传请求失败`);
-                                        }
-                                    }
-                                } catch (error) {
-                                    console.error('附件上传失败:', error);
-                                    message.warning('作业创建成功，但部分附件上传失败，请稍后重新上传');
-                                }
-                            }
+                        console.log('创建作业 - 作业数据:', homeworkData);
+                        
+                        try {
+                            const res = await createHomework(homeworkData);
+                            console.log('创建作业 - 返回结果:', res);
                             
-                            message.success('作业模板创建成功！');
-                            setIsModalVisible(false);
-                            form.resetFields();
-                            setUploadFiles([]);
-                            setSelectedCourseId(undefined);
-                            // 重新拉取作业列表
-                            const result = await getHomeworksForTeacher();
-                            if (Array.isArray(result)) {
-                                setData(result.map(item => ({
-                                    ...item,
-                                    createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
-                                    deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
-                                    attachments: item.attachments || [],
-                                })));
+                            if (res && res.length > 0) {
+                                // 如果有上传文件，创建附件
+                                if (uploadFiles.length > 0) {
+                                    try {
+                                        for (const file of uploadFiles) {
+                                            const formData = new FormData();
+                                            formData.append('file', file.originFileObj as File);
+                                            
+                                            // 上传文件
+                                            const uploadResponse = await fetch('/api/upload', {
+                                                method: 'POST',
+                                                body: formData,
+                                            });
+                                            
+                                            if (uploadResponse.ok) {
+                                                const uploadResult = await uploadResponse.json();
+                                                console.log('文件上传结果:', uploadResult);
+                                                
+                                                if (uploadResult.status === 'success' && uploadResult.data) {
+                                                    // 创建附件记录，关联到课程计划
+                                                    const attachmentData = {
+                                                        name: file.name,
+                                                        coursePlanId: selectedCoursePlan.id, // 关联到课程计划
+                                                        attachments: [{
+                                                            name: file.name,
+                                                            fileName: uploadResult.data.fileName,
+                                                            fileKey: uploadResult.data.fileKey,
+                                                        }],
+                                                    };
+                                                    
+                                                    await createAttachment(attachmentData);
+                                                } else {
+                                                    console.error('文件上传失败:', uploadResult.error);
+                                                    throw new Error(`文件 ${file.name} 上传失败`);
+                                                }
+                                            } else {
+                                                throw new Error(`文件 ${file.name} 上传请求失败`);
+                                            }
+                                        }
+                                    } catch (error) {
+                                        console.error('附件上传失败:', error);
+                                        message.warning('作业创建成功，但部分附件上传失败，请稍后重新上传');
+                                    }
+                                }
+                                
+                                message.success('作业模板创建成功！');
+                                setIsModalVisible(false);
+                                form.resetFields();
+                                setUploadFiles([]);
+                                setSelectedCoursePlanId(undefined);
+                                
+                                // 重新拉取作业列表
+                                console.log('重新拉取作业列表...');
+                                const result = await getHomeworksForCurrentTeacher();
+                                console.log('获取作业列表结果:', result);
+                                
+                                if (Array.isArray(result)) {
+                                    setData(result.map(item => ({
+                                        ...item,
+                                        createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
+                                        deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
+                                        // attachments: item.attachments || [],
+                                    })));
+                                    console.log('更新后的作业列表:', result);
+                                } else if (result.error) {
+                                    message.error(`获取作业列表失败: ${result.error}`);
+                                }
+                            } else {
+                                message.error('作业创建失败');
                             }
-                        } else {
+                        } catch (error) {
+                            console.error('创建作业失败:', error);
                             message.error('作业创建失败');
                         }
                     }}
                 >
                     <Form.Item
-                        label="选择课程"
-                        name="courseId"
-                        rules={[{ required: true, message: '请选择课程' }]}
+                        label="选择课程计划"
+                        name="coursePlanId"
+                        rules={[{ required: true, message: '请选择课程计划' }]}
                     >
                         <Select
-                            placeholder="请选择课程"
-                            onChange={setSelectedCourseId}
-                            value={selectedCourseId}
+                            placeholder="请选择课程计划"
+                            onChange={setSelectedCoursePlanId}
+                            value={selectedCoursePlanId}
                             showSearch
                             filterOption={(input, option) =>
                                 String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
                             }
                         >
-                            {courses.map(course => (
-                                <Select.Option key={course.id} value={course.id}>
-                                    {course.name}
+                            {coursePlans.map(plan => (
+                                <Select.Option key={plan.id} value={plan.id}>
+                                    {plan.course?.name || '未知课程'} - {plan.class?.name || '未知班级'}
                                 </Select.Option>
                             ))}
                         </Select>
@@ -981,13 +1018,13 @@ const Homework = () => {
                                         setSelectedClassesForPublish([]);
                                         
                                         // 重新拉取作业列表
-                                        const result = await getHomeworksForTeacher();
+                                        const result = await getHomeworksForCurrentTeacher();
                                         if (Array.isArray(result)) {
                                             setData(result.map(item => ({
                                                 ...item,
                                                 createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
                                                 deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
-                                                attachments: item.attachments || [],
+                                                // attachments: item.attachments || [],
                                             })));
                                         }
                                     } else {
@@ -1024,7 +1061,7 @@ const Homework = () => {
                                             setSelectedClassesForPublish([]);
                                             
                                             // 重新拉取作业列表
-                                            const result = await getHomeworksForTeacher();
+                                            const result = await getHomeworksForCurrentTeacher();
                                             if (Array.isArray(result)) {
                                                 setData(result.map(item => ({
                                                     ...item,
@@ -1320,13 +1357,13 @@ const Homework = () => {
                                         setEditingHomework(null);
                                         
                                         // 重新拉取作业列表
-                                        const result = await getHomeworksForTeacher();
+                                        const result = await getHomeworksForCurrentTeacher();
                                         if (Array.isArray(result)) {
                                             setData(result.map(item => ({
                                                 ...item,
                                                 createdAt: item.createdAt ? (typeof item.createdAt === 'string' ? item.createdAt : item.createdAt.toISOString()) : undefined,
                                                 deadline: item.deadline ? (typeof item.deadline === 'string' ? item.deadline : item.deadline?.toISOString()) : undefined,
-                                                attachments: item.attachments || [],
+                                                // attachments: item.attachments || [],
                                             })));
                                         }
                                     } else {
