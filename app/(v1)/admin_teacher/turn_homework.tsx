@@ -3,7 +3,7 @@
 // 作业批改页面
 import { useState, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
-import { App, Col, Row, Space, message, Button, Table, Tag, Modal, Input, Typography, Descriptions, List } from 'antd';
+import { App, Col, Row, Space, message, Button, Table, Tag, Modal, Input, Typography, Descriptions, List, Card } from 'antd';
 import { getSubmissionsForCurrentTeacher, getAttachmentsByCoursePlanId } from '@/lib/course/actions';
 import { SubmissionsWithRelations } from '@/lib/course/actions';
 import { useRouter } from 'next/navigation';
