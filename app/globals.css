@@ -1,0 +1,471 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+}
+
+.logo {
+  font-family: 'Menlo';
+}
+
+/*
+  Reset .rtf_note element styles to avoid unwanted inheritance
+*/
+
+/* Adapted from http://paulirish.com/2012/box-sizing-border-box-ftw/ */
+.rtf_note * {
+  box-sizing: border-box;
+}
+
+/* Adapted from Eric Meyer's CSS Reset: http://meyerweb.com/eric/tools/css/reset/ */
+.rtf_note a,
+.rtf_note abbr,
+.rtf_note acronym,
+.rtf_note address,
+.rtf_note b,
+.rtf_note big,
+.rtf_note cite,
+.rtf_note code,
+.rtf_note del,
+.rtf_note em,
+.rtf_note i,
+.rtf_note ins,
+.rtf_note kbd,
+.rtf_note mark,
+.rtf_note output,
+.rtf_note q,
+.rtf_note ruby,
+.rtf_note s,
+.rtf_note samp,
+.rtf_note small,
+.rtf_note strike,
+.rtf_note strong,
+.rtf_note sub,
+.rtf_note sup,
+.rtf_note time,
+.rtf_note tt,
+.rtf_note u,
+.rtf_note var,
+.rtf_note dfn,
+.rtf_note dl,
+.rtf_note dt,
+.rtf_note dd,
+.rtf_note ol,
+.rtf_note ul,
+.rtf_note li,
+.rtf_note blockquote,
+.rtf_note h1,
+.rtf_note h2,
+.rtf_note h3,
+.rtf_note h4,
+.rtf_note h5,
+.rtf_note h6,
+.rtf_note p,
+.rtf_note pre,
+.rtf_note table,
+.rtf_note caption,
+.rtf_note tbody,
+.rtf_note tfoot,
+.rtf_note thead,
+.rtf_note tr,
+.rtf_note th,
+.rtf_note td,
+.rtf_note applet,
+.rtf_note canvas,
+.rtf_note embed,
+.rtf_note figure,
+.rtf_note figcaption,
+.rtf_note iframe,
+.rtf_note img,
+.rtf_note object {
+  background: transparent;
+  border: 0;
+  font-size: 100%;
+  font: inherit;
+  line-height: 1;
+  margin: 0;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+/*
+  Baseline grid (for debugging baseline grid)
+*/
+
+.rtf_note baseline {
+  background-image: linear-gradient(
+    to bottom,
+    magenta 0,
+    rgba(255, 255, 255, 0) 1px
+  );
+  background-repeat: repeat-y;
+  background-size: 100% 1.5em;
+}
+
+/*
+  Initialize spacing and colors
+*/
+
+.rtf_note li,
+.rtf_note dt,
+.rtf_note dd,
+.rtf_note p,
+.rtf_note pre,
+.rtf_note caption,
+.rtf_note th,
+.rtf_note td,
+.rtf_note figcaption {
+  line-height: 1.5;
+}
+
+/* .rtf_note caption, .rtf_note dl, .rtf_note dd, .rtf_note div, .rtf_note figcaption, .rtf_note figure, .rtf_note h1, .rtf_note h2, .rtf_note h3, .rtf_note h4, .rtf_note h5, .rtf_note h6, .rtf_note p, .rtf_note pre, .rtf_note table, .rtf_note ol, .rtf_note ul {
+  margin: 0 0 1.5em 0;
+} */
+.rtf_note blockquote,
+.rtf_note ol,
+.rtf_note ul {
+  margin-left: 2.5em;
+}
+
+.rtf_note code,
+.rtf_note pre,
+.rtf_note th {
+  background-color: #f3f6fa;
+  background-color: var(--background-color);
+}
+
+.rtf_note code,
+.rtf_note pre,
+.rtf_note th,
+.rtf_note td {
+  color: #324354;
+  color: var(--color);
+}
+
+.rtf_note pre,
+.rtf_note table,
+.rtf_note th,
+.rtf_note td {
+  border: 1px solid #dbe2f2;
+  border-color: var(--border-color);
+}
+
+/*
+  Inline elements
+*/
+
+.rtf_note a {
+  text-decoration: underline;
+}
+
+.rtf_note strong,
+.rtf_note b {
+  font-weight: bolder;
+}
+
+.rtf_note u,
+.rtf_note em,
+.rtf_note i {
+  font-style: italic;
+  text-decoration: none;
+}
+
+.rtf_note abbr[title] {
+  border-bottom: 1px dotted gray;
+}
+
+.rtf_note address {
+  /* no style */
+}
+
+.rtf_note cite {
+  font-style: italic;
+}
+
+.rtf_note code {
+  /* background-color set above */
+  /* color set above */
+  font-family: monospace;
+  padding: 0.1em 0.2em;
+}
+
+.rtf_note dfn {
+  /* no style */
+}
+
+.rtf_note del {
+  color: red;
+  text-decoration: line-through;
+}
+
+.rtf_note ins {
+  color: green;
+  text-decoration: none;
+}
+
+.rtf_note kbd {
+  font-family: monospace;
+}
+
+.rtf_note mark {
+  background-color: rgba(0, 140, 255, 0.1);
+  background-color: var(--mark-color);
+  color: black;
+}
+
+.rtf_note samp {
+  font-family: monospace;
+}
+
+.rtf_note small {
+  color: gray;
+  font-size: 0.75em;
+}
+
+.rtf_note s {
+  text-decoration: line-through;
+}
+
+.rtf_note sub {
+  font-size: 80%;
+  vertical-align: sub;
+}
+
+.rtf_note sup {
+  font-size: 0.75em;
+  vertical-align: super;
+}
+
+.rtf_note var {
+  font-style: italic;
+}
+
+/*
+  Lists
+*/
+
+.rtf_note ol,
+.rtf_note ul {
+  /* margin set above */
+}
+
+.rtf_note ol ol,
+.rtf_note ul ul,
+.rtf_note ol ul,
+.rtf_note ul ol {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.rtf_note ol {
+  list-style: decimal;
+}
+
+.rtf_note ol ol {
+  list-style: lower-alpha;
+}
+
+.rtf_note ol ol ol {
+  list-style: lower-roman;
+}
+
+.rtf_note ol ol ol ol {
+  list-style: decimal;
+}
+
+.rtf_note ul {
+  list-style: default;
+}
+
+.rtf_note li {
+  /* line-height set above */
+  list-style-type: disc;
+}
+
+.rtf_note dl {
+  /* margin set above */
+}
+
+.rtf_note dt {
+  font-weight: bold;
+  /* line-height set above */
+}
+
+.rtf_note dd {
+  /* line-height set above */
+  margin-top: 0;
+}
+
+/*
+  Block-level elements
+*/
+
+.rtf_note h1,
+.rtf_note h2,
+.rtf_note h3,
+.rtf_note h4,
+.rtf_note h5,
+.rtf_note h6 {
+  font-weight: bold;
+}
+
+.rtf_note h1 {
+  font-size: 2em;
+  line-height: 1.5;
+  /* margin  : 2.25em 0 .75em 0; */
+  margin: 0.67em 0 0.67em 0;
+}
+
+.rtf_note h2 {
+  font-size: 1.5em;
+  line-height: 2;
+  /* margin  : 2em 0 1em 0; */
+  margin: 0.5em 0;
+}
+
+.rtf_note h3 {
+  font-size: 1.25em;
+  line-height: 2.4;
+  /* margin  : 1.2em 0 0 0; */
+  margin: 0.5em 0 0 0;
+}
+
+.rtf_note h4 {
+  font-size: 1em;
+  line-height: 1.5;
+  /* margin  : 1.5em 0 0 0; */
+  margin: 0.5em 0 0 0;
+}
+
+.rtf_note h5 {
+  font-size: 0.75em;
+  line-height: 2;
+  /* margin  : 2em 0 0 0; */
+  margin: 0.5em 0 0 0;
+}
+
+.rtf_note h6 {
+  font-size: 0.75em;
+  font-weight: inherit;
+  line-height: 2;
+  /* margin  : 2em 0 0 0; */
+  margin: 0.5em 0 0 0;
+}
+
+.rtf_note p {
+  /* line-height set above */
+  /* margin set above */
+}
+
+.rtf_note blockquote {
+  border-left: 0.2em solid rgba(0, 0, 0, 0.2);
+  border-left-color: var(--blockquote-color);
+  margin-left: 0.2em;
+  opacity: 0.8;
+  padding-left: 0.8em;
+}
+
+.rtf_note wysiwyg blockquote {
+  border-left: none;
+  margin-left: 3em;
+  opacity: 1;
+}
+
+.rtf_note pre {
+  /* background-color set above */
+  border-radius: 2px;
+  /* color set above */
+  display: block;
+  font-family: monospace;
+  font-size: 0.75em;
+  line-height: 2;
+  margin: 0 0 2em 0;
+  max-width: 100%;
+  overflow: scroll;
+  padding: calc(1em - 1px) 1.5em;
+  white-space: pre-wrap;
+}
+
+/*
+  Tables
+*/
+
+.rtf_note table {
+  /* border set above */
+  border-collapse: collapse;
+  /* margin set above */
+  table-layout: auto;
+}
+
+.rtf_note caption {
+  caption-side: top;
+  font-weight: bold;
+  /* line-height set above */
+  /* margin set above */
+  margin-top: 0;
+  text-align: left;
+}
+
+.rtf_note thead {
+  /* no style */
+}
+
+.rtf_note tbody {
+  /* no style */
+}
+
+.rtf_note tfoot {
+  /* no style */
+}
+
+.rtf_note th,
+.rtf_note td {
+  /* border set above */
+  /* color set above */
+  /* line-height set above */
+  padding: calc(0.75em - 0.5px);
+  text-align: left;
+}
+
+.rtf_note th {
+  /* background-color set above */
+  font-weight: normal;
+}
+
+.rtf_note td {
+  /* no style */
+}
+
+/*
+  Media
+*/
+
+.rtf_note embed,
+.rtf_note iframe,
+.rtf_note img,
+.rtf_note object {
+  display: inline;
+  max-width: 100%;
+}
+
+.rtf_note figure {
+  max-width: 100%;
+  /* margin set above */
+}
+
+.rtf_note figcaption {
+  font-size: 0.75em;
+  line-height: 2;
+  /* margin set above */
+  text-align: left;
+}
+
+.preview img {
+  max-width: 500px!important;
+  display: block;
+}
+
+.fix-select-input-border input:focus {
+  box-shadow: none !important;
+}
