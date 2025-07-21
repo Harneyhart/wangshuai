@@ -29,6 +29,9 @@ interface HomeworkManagerProps {
   courseId: string;
 }
 
+import { getClassesForCurrentTeacher } from '@/lib/course/actions';
+
+
 const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
   const { modal, message } = App.useApp();
 
@@ -63,6 +66,7 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
   // 课程计划
   const [coursePlans, setCoursePlans] = useState<any[]>([]);
   const [selectedCoursePlanId, setSelectedCoursePlanId] = useState<string>();
+  
 
   // 过滤作业数据
   useEffect(() => {
@@ -71,10 +75,7 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
       const result = await getHomeworksForCurrentTeacher();
       if (Array.isArray(result)) {
         // 只显示当前课程的作业
-        setData(result.filter(item => {
-          const plan = coursePlans.find(plan => plan.id === item.coursePlanId);
-          return plan && plan.course?.id === courseId;
-        }));
+        setData(result.filter(item => item.courseId === courseId));
       }
       setLoading(false);
     };
@@ -91,8 +92,10 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
       }
     };
     const fetchClasses = async () => {
-      const classes = await getAllClasses();
-      setAllClasses(classes);
+      const classes = await getClassesForCurrentTeacher();
+      if (Array.isArray(classes)) {
+        setAllClasses(classes);
+      }
     };
     fetchCoursePlans();
     fetchClasses();
@@ -183,6 +186,34 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
     });
   };
 
+  const handlePublishHomework = async (record: Homework) => {
+    try {
+      const newStatus = record.status === '已发布' ? 0 : 1;
+      const homeworkData = {
+        id: record.key,
+        coursePlanId: record.coursePlanId || '',
+        name: record.homework,
+        description: record.description || '',
+        order: data.length + 1,
+        deadline: record.deadline ? new Date(record.deadline) : new Date(),
+        isActive: newStatus,
+      };
+      const res = await updateHomeworkById(homeworkData);
+      if (res) {
+        message.success(newStatus === 1 ? '作业已发布' : '作业已取消发布');
+        // 重新拉取作业列表，保证同步
+        const result = await getHomeworksForCurrentTeacher();
+        if (Array.isArray(result)) {
+          setData(result.filter(item => item.courseId === courseId));
+        }
+      } else {
+        message.error('操作失败');
+      }
+    } catch (error) {
+      message.error('操作失败');
+    }
+  };
+
   // 表格列
   const columns = [
     {
@@ -271,6 +302,18 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
             }}
           >编辑</Button>
           <Button type="link" size="small" danger onClick={() => handleDeleteHomework(record)}>删除</Button>
+          <Button
+            type="link"
+            size="small"
+            style={{ color: record.status === '已发布' ? '#faad14' : '#52c41a' }}
+            onClick={() => {
+              setPublishingHomework(record);
+              setSelectedClassesForPublish([]);
+              setPublishModalVisible(true);
+            }}
+          >
+            {record.status === '已发布' ? '取消发布' : '发布'}
+          </Button>
         </Space>
       ),
     },
@@ -340,7 +383,7 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
               name: values.homework,
               description: values.description,
               order: data.length + 1,
-              deadline: values.deadline ? values.deadline.toDate() : new Date(),
+              deadline: values.deadline ? new Date(values.deadline) : new Date(),
               isActive: 0,
             };
             try {
@@ -379,10 +422,7 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
                 // 重新拉取作业列表
                 const result = await getHomeworksForCurrentTeacher();
                 if (Array.isArray(result)) {
-                  setData(result.filter(item => {
-                    const plan = coursePlans.find(plan => plan.id === item.coursePlanId);
-                    return plan && plan.course?.id === courseId;
-                  }));
+                  setData(result.filter(item => item.courseId === courseId));
                 }
               } else {
                 message.error('作业创建失败');
@@ -499,10 +539,7 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
                   // 重新拉取作业列表
                   const result = await getHomeworksForCurrentTeacher();
                   if (Array.isArray(result)) {
-                    setData(result.filter(item => {
-                      const plan = coursePlans.find(plan => plan.id === item.coursePlanId);
-                      return plan && plan.course?.id === courseId;
-                    }));
+                    setData(result.filter(item => item.courseId === courseId));
                   }
                 } else {
                   message.error('作业更新失败');
@@ -549,6 +586,164 @@ const HomeworkManager: React.FC<HomeworkManagerProps> = ({ courseId }) => {
             </Form.Item>
           </Form>
         )}
+      </Modal>
+
+      {/* 发布作业弹窗 */}
+      <Modal
+        title={publishingHomework?.status === '已发布' ? '取消发布确认' : '发布作业到班级'}
+        open={publishModalVisible}
+        onCancel={() => {
+          setPublishModalVisible(false);
+          setSelectedClassesForPublish([]);
+        }}
+        width={600}
+        footer={[
+          <Button key="cancel" onClick={() => setPublishModalVisible(false)}>
+            取消
+          </Button>,
+          <Button
+            key="publish"
+            type="primary"
+            disabled={publishingHomework?.status !== '已发布' && selectedClassesForPublish.length === 0}
+            onClick={async () => {
+              if (!publishingHomework) {
+                message.error('未找到要操作的作业');
+                return;
+              }
+              try {
+                if (publishingHomework.status === '已发布') {
+                  // 取消发布
+                  await updateHomeworkById({
+                    id: publishingHomework.key,
+                    coursePlanId: publishingHomework.coursePlanId || '',
+                    name: publishingHomework.homework,
+                    description: publishingHomework.description || '',
+                    order: data.length + 1,
+                    deadline: publishingHomework.deadline ? new Date(publishingHomework.deadline) : new Date(),
+                    isActive: 0,
+                  });
+                  message.success('作业已取消发布');
+                } else {
+                  if (selectedClassesForPublish.length === 0) {
+                    message.error('请选择要发布到的班级');
+                    return;
+                  }
+                  // 只发布到第一个选中的班级
+                  const classPlanId = selectedClassesForPublish[0];
+                  await updateHomeworkById({
+                    id: publishingHomework.key,
+                    coursePlanId: classPlanId,
+                    name: publishingHomework.homework,
+                    description: publishingHomework.description || '',
+                    order: data.length + 1,
+                    deadline: publishingHomework.deadline ? new Date(publishingHomework.deadline) : new Date(),
+                    isActive: 1,
+                  });
+                  message.success('作业已发布');
+                }
+                setPublishModalVisible(false);
+                setSelectedClassesForPublish([]);
+                // 刷新数据
+                const result = await getHomeworksForCurrentTeacher();
+                if (Array.isArray(result)) {
+                  setData(result.filter(item => item.courseId === courseId));
+                }
+              } catch (error) {
+                message.error('操作失败');
+              }
+            }}
+          >
+            {publishingHomework?.status === '已发布' ? '确认取消发布' : `发布到 ${selectedClassesForPublish.length} 个班级`}
+          </Button>
+        ]}
+      >
+        {/* 班级选择内容 */}
+        <div>
+          <div style={{ marginBottom: '16px' }}>
+            <Button
+              type="dashed"
+              style={{ width: '100%', height: '40px' }}
+              onClick={() => setClassSelectModalVisible(true)}
+            >
+              {selectedClassesForPublish.length === 0
+                ? '点击选择要发布到的班级'
+                : `已选择 ${selectedClassesForPublish.length} 个班级`
+              }
+            </Button>
+            {selectedClassesForPublish.length > 0 && (
+              <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#f6ffed', borderRadius: '4px' }}>
+                <Typography.Text type="secondary" style={{ fontSize: '12px' }}>
+                  已选择班级：
+                </Typography.Text>
+                <div style={{ marginTop: '4px' }}>
+                  {selectedClassesForPublish.map(classId => {
+                    const classItem = allClasses.find(c => c.id === classId);
+                    return (
+                      <Tag key={classId} color="green" style={{ margin: '2px' }}>
+                        {classItem?.name}
+                      </Tag>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      {/* 班级选择弹窗 */}
+      <Modal
+        title="选择要发布到的班级"
+        open={classSelectModalVisible}
+        onCancel={() => setClassSelectModalVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setClassSelectModalVisible(false)}>
+            取消
+          </Button>,
+          <Button
+            key="confirm"
+            type="primary"
+            onClick={() => setClassSelectModalVisible(false)}
+          >
+            确定
+          </Button>
+        ]}
+        width={600}
+      >
+        <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+          {allClasses.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+              暂无可用班级
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '12px' }}>
+              {allClasses.map(classItem => (
+                <div
+                  key={classItem.id}
+                  style={{
+                    border: `2px solid ${selectedClassesForPublish.includes(classItem.id) ? '#52c41a' : '#d9d9d9'}`,
+                    borderRadius: '8px',
+                    padding: '12px',
+                    cursor: 'pointer',
+                    backgroundColor: selectedClassesForPublish.includes(classItem.id) ? '#f6ffed' : '#fff',
+                    transition: 'all 0.3s ease',
+                  }}
+                  onClick={() => {
+                    if (selectedClassesForPublish.includes(classItem.id)) {
+                      setSelectedClassesForPublish(selectedClassesForPublish.filter(id => id !== classItem.id));
+                    } else {
+                      setSelectedClassesForPublish([classItem.id]); // 单选
+                    }
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: '14px' }}>
+                    {classItem.name}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   );

@@ -11,7 +11,15 @@ import { App } from 'antd';
 import { useSearchParams } from 'next/navigation';
 import { getAllCourses } from '@/lib/course/actions';
 import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons';
+
+// 作业管理 
 import HomeworkManager from '@/components/HomeworkManager';
+// 作业批改
+import TurnHomeworkManager from '@/components/TurnHomeworkManager';
+
+type TurnHomeworkManagerProps = {
+  courseId?: string;
+};
 
 const My_course = () => {
     const { modal, message } = App.useApp();
@@ -774,6 +782,10 @@ const My_course = () => {
 
                 {activeTab === 'homework' && (
                     <HomeworkManager courseId={courseId || ''} />
+                )}
+
+                {activeTab === 'turnhomework' && (
+                    <TurnHomeworkManager courseId={courseId || ''} />
                 )}
 
                 {/* 编辑弹窗 */}
