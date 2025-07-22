@@ -16,6 +16,8 @@ import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons';
 import HomeworkManager from '@/components/HomeworkManager';
 // 作业批改
 import TurnHomeworkManager from '@/components/TurnHomeworkManager';
+// 教学课件
+import Teachmanager from '@/components/Teachmanager';
 
 type TurnHomeworkManagerProps = {
   courseId?: string;
@@ -33,7 +35,7 @@ const My_course = () => {
     const pageSize = 3; // 每页最多3行
     const [jumpPage, setJumpPage] = useState(''); // 跳转页面输入值
     const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
-    const [activeTab, setActiveTab] = useState<'arrange' | 'homework' | 'turnhomework' | 'together'>('arrange');
+    const [activeTab, setActiveTab] = useState<'arrange' | 'homework' | 'turnhomework' | 'teach'>('arrange');
 
     // 编辑和删除相关状态
     const [editModalVisible, setEditModalVisible] = useState(false);
@@ -633,15 +635,15 @@ const My_course = () => {
                     <button
                         style={{
                             border: 'none',
-                            background: activeTab === 'together' ? '#fff' : '#f7f8fa',
-                            borderBottom: activeTab === 'together' ? '2px solid #1890ff' : '2px solid transparent',
-                            color: activeTab === 'together' ? '#1890ff' : '#666',
-                            fontWeight: activeTab === 'together' ? 'bold' : 'normal',
+                            background: activeTab === 'teach' ? '#fff' : '#f7f8fa',
+                            borderBottom: activeTab === 'teach' ? '2px solid #1890ff' : '2px solid transparent',
+                            color: activeTab === 'teach' ? '#1890ff' : '#666',
+                            fontWeight: activeTab === 'teach' ? 'bold' : 'normal',
                             padding: '8px 24px',
                             outline: 'none',
                             cursor: 'pointer'
                         }}
-                        onClick={() => setActiveTab('together')}
+                        onClick={() => setActiveTab('teach')}
                     >
                         教学课件
                     </button>
@@ -780,12 +782,16 @@ const My_course = () => {
                     </>
                 )}
 
-                {activeTab === 'homework' && (
+            {activeTab === 'homework' && (
                     <HomeworkManager courseId={courseId || ''} />
                 )}
 
                 {activeTab === 'turnhomework' && (
                     <TurnHomeworkManager courseId={courseId || ''} />
+                )}
+
+                {activeTab === 'teach' && (
+                    <Teachmanager courseId={courseId || ''} />
                 )}
 
                 {/* 编辑弹窗 */}

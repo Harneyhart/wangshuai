@@ -227,10 +227,38 @@ const Teach = () => {
                 // 检查是否通过作业提交关联（学生上传的文件）
                 const hasSubmissionAttachment = attachment.submissionsToAttachments && attachment.submissionsToAttachments.length > 0;
                 
-                console.log(`课件 ${attachment.name}: 课程计划ID=${coursePlan?.id}, 是否属于当前教师=${isTeacherAttachment}, 是否有作业提交关联=${hasSubmissionAttachment}`);
+                // 检查是否通过作业提交关联（更严格的检查）
+                const isStudentSubmission = attachment.submissionsToAttachments && 
+                    attachment.submissionsToAttachments.some((submissionAtt: any) => 
+                        submissionAtt.submission && submissionAtt.submission.student
+                    );
+                
+                // 检查是否为学生提交的作业附件（通过检查submission的student字段）
+                const isStudentHomeworkAttachment = attachment.submissionsToAttachments && 
+                    attachment.submissionsToAttachments.some((submissionAtt: any) => {
+                        const submission = submissionAtt.submission;
+                        return submission && submission.student && submission.student.user;
+                    });
+                
+                // ★★★ 更简单的判断：只显示通过课程计划关联且没有作业提交关联的附件
+                const hasCoursePlanAttachment = attachment.coursePlansToAttachments && attachment.coursePlansToAttachments.length > 0;
+                const hasNoSubmissionAttachment = !attachment.submissionsToAttachments || attachment.submissionsToAttachments.length === 0;
+                
+                console.log(`课件 ${attachment.name}: 课程计划ID=${coursePlan?.id}, 是否属于当前教师=${isTeacherAttachment}, 是否有课程计划关联=${hasCoursePlanAttachment}, 是否有作业提交关联=${hasSubmissionAttachment}, 是否为学生提交=${isStudentSubmission}, 是否为学生作业附件=${isStudentHomeworkAttachment}`);
                 
                 // 只返回通过课程计划关联且属于当前教师的附件，排除学生作业提交的附件
-                return isTeacherAttachment && !hasSubmissionAttachment;
+                // 条件1：必须属于当前教师的课程计划
+                // 条件2：必须通过课程计划关联（教师上传的课件）
+                // 条件3：不能有作业提交关联（排除学生提交的作业附件）
+                const shouldInclude = isTeacherAttachment && hasCoursePlanAttachment && hasNoSubmissionAttachment;
+                
+                if (shouldInclude) {
+                    console.log(`✅ 包含课件: ${attachment.name} (教师上传)`);
+                } else {
+                    console.log(`❌ 排除附件: ${attachment.name} (原因: 教师附件=${isTeacherAttachment}, 课程计划关联=${hasCoursePlanAttachment}, 无作业关联=${hasNoSubmissionAttachment})`);
+                }
+                
+                return shouldInclude;
             });
             
             console.log('当前教师的课件数据:', teacherAttachments);
@@ -449,23 +477,44 @@ const Teach = () => {
            <div style={{ fontSize: 20, fontWeight: 600 }}>教学课件</div>
            
            {/* 操作按钮区域 */}
-           <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', marginLeft: '800px' }}>
+           <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
                <Button type="primary" onClick={() => setModalAddteach(true)}>添加课件</Button>
                <Button type="primary" danger onClick={handleBatchDelete} disabled={selectedRowKeys.length === 0 }
                >
                    删除课件 ({selectedRowKeys.length})
                </Button>
-               <Button 
+               {/* <Button 
                    type="default" 
                    onClick={async () => {
-                       // 临时显示所有课件（调试用）
+                       // 调试：显示所有附件的关联情况
                        const attachments = await getAllAttachments();
-                       console.log('所有课件（不受权限限制）:', attachments);
-                       message.info(`共有 ${attachments.length} 个课件，当前显示 ${teachList.length} 个`);
+                       console.log('所有附件数据:', attachments);
+                       
+                       const teacherCoursePlans = await getCurrentTeacherCoursePlans();
+                       const teacherCoursePlanIds = teacherCoursePlans.map((plan:any) => plan.id);
+                       
+                       attachments.forEach((attachment: any) => {
+                           const coursePlan = attachment.coursePlansToAttachments?.[0]?.coursePlan;
+                           const isTeacherAttachment = coursePlan && teacherCoursePlanIds.includes(coursePlan.id);
+                           const hasCoursePlanAttachment = attachment.coursePlansToAttachments && attachment.coursePlansToAttachments.length > 0;
+                           const hasSubmissionAttachment = attachment.submissionsToAttachments && attachment.submissionsToAttachments.length > 0;
+                           
+                           console.log(`附件 "${attachment.name}":`, {
+                               id: attachment.id,
+                               isTeacherAttachment,
+                               hasCoursePlanAttachment,
+                               hasSubmissionAttachment,
+                               coursePlanId: coursePlan?.id,
+                               courseName: coursePlan?.course?.name,
+                               className: coursePlan?.class?.name
+                           });
+                       });
+                       
+                       message.info(`共有 ${attachments.length} 个附件，当前显示 ${teachList.length} 个教师课件`);
                    }}
                >
-                   调试：查看所有课件
-               </Button>
+                   调试：查看附件关联
+               </Button> */}
            </div>
 
            {/* 课件列表显示区域 */}
