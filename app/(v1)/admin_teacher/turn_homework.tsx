@@ -3,26 +3,49 @@
 // 作业批改页面
 import { useState, useEffect, useRef } from 'react';
 import dayjs from 'dayjs';
-import { App, Col, Row, Space, message, Button, Table, Tag, Modal, Input, Typography, Descriptions, List, Card } from 'antd';
-import { getSubmissionsForCurrentTeacher, getAttachmentsByCoursePlanId } from '@/lib/course/actions';
+import { App, Col, Row, Space, message, Button, Table, Tag, Modal, Input, Typography, Descriptions, List, Card, Form, Select } from 'antd';
+import { getSubmissionsForCurrentTeacher, getAttachmentsByCoursePlanId, getHomeworksForCurrentTeacher } from '@/lib/course/actions';
 import { SubmissionsWithRelations } from '@/lib/course/actions';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { LeftCircleFilled } from '@ant-design/icons';
 
 // 使用数据库返回的SubmissionsWithRelations类型
 type HomeworkSubmission = SubmissionsWithRelations;
 
 // 作业数据类型（去重后的）
 type HomeworkItem = {
-    id: string;
-    name: string;
-    courseName: string;
-    submissionCount: number;
-    gradedCount: number;
-    plan: any;
-    deadline?: string;
-    createdAt?: string;
+    id: string; // 作业id   
+    name: string;   // 作业名称
+    courseName: string; // 课程名称
+    submissionCount: number; // 作业提交人数
+    gradedCount: number; // 作业评分人数
+    totalStudentCount: number; // 作业发布班级的总学生数
+    plan: any; // 作业所属课程计划
+    deadline?: string; // 作业截止时间
+    createdAt?: string; // 作业创建时间
 };
+
+
+// 批改记录类型定义
+type GradingRecord = {
+    key: string;
+    homework: string;
+    studentName: string;
+    submitTime: string;
+    score?: number | null;
+    maxScore: number;
+    comment?: string;
+    status: '未评分' | '已评分';
+    description: string;
+    id: string;
+    studentId: string;
+    homeworkId: string;
+    attachments?: any[];
+    courseName?: string;
+    className?: string;
+  };
+
 
 const Homework = () => {
     const { message } = App.useApp();
@@ -32,66 +55,159 @@ const Homework = () => {
     const [searchText, setSearchText] = useState('');
     const [filteredHomeworkList, setFilteredHomeworkList] = useState<HomeworkItem[]>([]);
     const [isSearching, setIsSearching] = useState(false);
+    
+    // 班级选择相关状态
+    const [selectedClass, setSelectedClass] = useState<string>('');
+    const [teacherClasses, setTeacherClasses] = useState<any[]>([]);
+    const [classStudentCounts, setClassStudentCounts] = useState<{[className: string]: number}>({});
+    const [totalStudentCount, setTotalStudentCount] = useState(0);
 
     // 作业相关状态
     const [selectedHomework, setSelectedHomework] = useState<any>(null);
     const [data, setData] = useState<HomeworkItem[]>([]);
     const [loading, setLoading] = useState(false);
+    const [allClasses, setAllClasses] = useState<any[]>([]);
+    const [classSelectModalVisible, setClassSelectModalVisible] = useState(false);
 
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
+    const [coursePlans, setCoursePlans] = useState<any[]>([]);
 
     // 作业详情弹窗状态
     const [detailModalVisible, setDetailModalVisible] = useState(false);
-    const [teacherAttachments, setTeacherAttachments] = useState<any[]>([]);
     const [studentAttachments, setStudentAttachments] = useState<any[]>([]);
     const [attachmentsLoading, setAttachmentsLoading] = useState(false);
 
-    // 从数据库读取学生提交的作业数据并处理为去重的作业列表
+    // 获取当前教师所教的班级
+    const getTeacherClasses = async () => {
+        try {
+            // 使用现有的函数获取当前教师的课程计划
+            const { getCoursePlansForCurrentTeacher } = await import('@/lib/course/actions');
+            const coursePlans = await getCoursePlansForCurrentTeacher();
+            
+            if (Array.isArray(coursePlans)) {
+                // 从课程计划中提取教师所教的班级
+                const teacherClasses = coursePlans
+                    .filter((plan: any) => plan.class && plan.course)
+                    .map((plan: any) => ({
+                        id: plan.class.id,
+                        name: plan.class.name,
+                        courseName: plan.course.name,
+                        coursePlanId: plan.id
+                    }));
+                
+                // 去重，因为同一个班级可能有多个课程
+                const uniqueClasses = teacherClasses.filter((classItem: any, index: number, self: any[]) => 
+                    index === self.findIndex((c: any) => c.id === classItem.id)
+                );
+                
+                setTeacherClasses(uniqueClasses);
+                console.log('获取到教师班级:', uniqueClasses);
+            } else {
+                console.error('获取课程计划失败:', coursePlans);
+                setTeacherClasses([]);
+            }
+        } catch (error) {
+            console.error('获取教师班级失败:', error);
+            setTeacherClasses([]);
+        }
+    };
+
+    // 获取作业的学生总数
+    const getHomeworkStudentCount = async (homeworkId: string) => {
+        try {
+            const response = await fetch(`/api/homework/student-count?homeworkId=${homeworkId}`);
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success && result.data) {
+                    return result.data.studentCount || 0;
+                }
+            }
+        } catch (error) {
+            console.error(`获取作业 ${homeworkId} 学生数量失败:`, error);
+        }
+        return 0;
+    };
+
+    // 计算应交人数：根据是否有班级筛选来动态计算
+    const getExpectedStudentCount = () => {
+        if (selectedClass && selectedClass.trim()) {
+            // 如果筛选了特定班级，返回该班级的学生数
+            return classStudentCounts[selectedClass] || 0;
+        } else {
+            // 如果没有筛选班级，返回所有发布该作业的班级的学生总数
+            // 从 classStudentCounts 中获取所有班级的学生数总和
+            return Object.values(classStudentCounts).reduce((total: number, count: number) => total + count, 0);
+        }
+    };
+
+    // 从数据库读取当前教师所教班级的作业数据
     useEffect(() => {
         const loadHomeworkData = async () => {
+            // 先获取教师班级
+            console.log('开始获取教师班级...');
+            await getTeacherClasses();
+            console.log('教师班级获取完成');
             try {
                 setLoading(true);
                 console.log('开始加载作业数据...');
-                const submissions = await getSubmissionsForCurrentTeacher();
-                console.log('获取到的作业提交数据:', submissions);
                 
-                // 按作业ID去重，统计每个作业的提交情况
-                const homeworkMap = new Map<string, HomeworkItem>();
+                // 获取当前教师的作业列表（包括没有提交的作业）
+                const homeworks = await getHomeworksForCurrentTeacher();
+                console.log('获取到的作业数据:', homeworks);
                 
-                submissions.forEach(submission => {
-                    const homeworkId = submission.homework?.id;
-                    if (!homeworkId) return;
+                if (Array.isArray(homeworks)) {
+                    // 获取当前教师班级学生的提交数据
+                    const submissions = await getSubmissionsForCurrentTeacher();
+                    console.log('获取到的作业提交数据:', submissions);
                     
-                    if (!homeworkMap.has(homeworkId)) {
-                        homeworkMap.set(homeworkId, {
-                            id: homeworkId,
-                            name: submission.homework?.name || '未命名作业',
-                            courseName: submission.homework?.plan?.course?.name || '未知课程',
+                    // 按作业ID去重，统计每个作业的提交情况
+                    const homeworkMap = new Map<string, HomeworkItem>();
+                    
+                    // 先处理所有作业，设置默认值
+                    for (const homework of homeworks) {
+                        const totalStudentCount = await getHomeworkStudentCount(homework.key);
+                        homeworkMap.set(homework.key, {
+                            id: homework.key,
+                            name: homework.homework,
+                            courseName: homework.courseName || '未知课程',
                             submissionCount: 0,
                             gradedCount: 0,
-                            plan: submission.homework?.plan,
-                            deadline: submission.homework?.deadline ? 
-                                (typeof submission.homework.deadline === 'string' ? submission.homework.deadline : submission.homework.deadline.toISOString()) 
-                                : undefined,
-                            createdAt: submission.homework?.createdAt ? 
-                                (typeof submission.homework.createdAt === 'string' ? submission.homework.createdAt : submission.homework.createdAt.toISOString()) 
-                                : undefined
+                            totalStudentCount: totalStudentCount,
+                            plan: { 
+                                id: homework.coursePlanId,
+                                course: { id: homework.coursePlanId, name: homework.courseName }
+                            },
+                            deadline: homework.deadline,
+                            createdAt: homework.createdAt
                         });
                     }
                     
-                    const homework = homeworkMap.get(homeworkId)!;
-                    homework.submissionCount++;
-                    if (submission.score !== null) {
-                        homework.gradedCount++;
+                    // 统计提交情况
+                    submissions.forEach(submission => {
+                        const homeworkId = submission.homework?.id;
+                        if (!homeworkId) return;
+                        
+                        const homework = homeworkMap.get(homeworkId);
+                        if (homework) {
+                            homework.submissionCount++;
+                            if (submission.score !== null) {
+                                homework.gradedCount++;
+                            }
+                        }
+                    });
+                    
+                    const homeworkArray = Array.from(homeworkMap.values());
+                    setData(homeworkArray);
+                    
+                    if (homeworkArray.length > 0) {
+                        message.success(`成功加载 ${homeworkArray.length} 个作业`);
+                    } else {
+                        message.info('当前没有需要批改的作业');
                     }
-                });
-                
-                const homeworkArray = Array.from(homeworkMap.values());
-                setData(homeworkArray);
-                
-                if (homeworkArray.length > 0) {
-                    message.success(`成功加载 ${homeworkArray.length} 个作业`);
+                } else {
+                    message.error('获取作业数据失败');
+                    setData([]);
                 }
             } catch (error) {
                 console.error('读取作业数据失败:', error);
@@ -110,43 +226,59 @@ const Homework = () => {
         try {
             setLoading(true);
             console.log('手动刷新作业数据...');
-            const submissions = await getSubmissionsForCurrentTeacher();
-            console.log('刷新获取到的数据:', submissions);
             
-            // 重新处理数据
-            const homeworkMap = new Map<string, HomeworkItem>();
+            // 获取当前教师的作业列表（包括没有提交的作业）
+            const homeworks = await getHomeworksForCurrentTeacher();
+            console.log('刷新获取到的作业数据:', homeworks);
             
-            submissions.forEach(submission => {
-                const homeworkId = submission.homework?.id;
-                if (!homeworkId) return;
+            if (Array.isArray(homeworks)) {
+                // 获取当前教师班级学生的提交数据
+                const submissions = await getSubmissionsForCurrentTeacher();
+                console.log('刷新获取到的提交数据:', submissions);
                 
-                if (!homeworkMap.has(homeworkId)) {
-                    homeworkMap.set(homeworkId, {
-                        id: homeworkId,
-                        name: submission.homework?.name || '未命名作业',
-                        courseName: submission.homework?.plan?.course?.name || '未知课程',
+                // 重新处理数据
+                const homeworkMap = new Map<string, HomeworkItem>();
+                
+                // 先处理所有作业，设置默认值
+                for (const homework of homeworks) {
+                    const totalStudentCount = await getHomeworkStudentCount(homework.key);
+                    homeworkMap.set(homework.key, {
+                        id: homework.key,
+                        name: homework.homework,
+                        courseName: homework.courseName || '未知课程',
                         submissionCount: 0,
                         gradedCount: 0,
-                        plan: submission.homework?.plan,
-                        deadline: submission.homework?.deadline ? 
-                            (typeof submission.homework.deadline === 'string' ? submission.homework.deadline : submission.homework.deadline.toISOString()) 
-                            : undefined,
-                        createdAt: submission.homework?.createdAt ? 
-                            (typeof submission.homework.createdAt === 'string' ? submission.homework.createdAt : submission.homework.createdAt.toISOString()) 
-                            : undefined
+                        totalStudentCount: totalStudentCount,
+                        plan: { 
+                            id: homework.coursePlanId,
+                            course: { id: homework.coursePlanId, name: homework.courseName }
+                        },
+                        deadline: homework.deadline,
+                        createdAt: homework.createdAt
                     });
                 }
                 
-                const homework = homeworkMap.get(homeworkId)!;
-                homework.submissionCount++;
-                if (submission.score !== null) {
-                    homework.gradedCount++;
-                }
-            });
-            
-            const homeworkArray = Array.from(homeworkMap.values());
-            setData(homeworkArray);
-            message.success(`刷新成功，共 ${homeworkArray.length} 个作业`);
+                // 统计提交情况
+                submissions.forEach(submission => {
+                    const homeworkId = submission.homework?.id;
+                    if (!homeworkId) return;
+                    
+                    const homework = homeworkMap.get(homeworkId);
+                    if (homework) {
+                        homework.submissionCount++;
+                        if (submission.score !== null) {
+                            homework.gradedCount++;
+                        }
+                    }
+                });
+                
+                const homeworkArray = Array.from(homeworkMap.values());
+                setData(homeworkArray);
+                message.success(`刷新成功，共 ${homeworkArray.length} 个作业`);
+            } else {
+                message.error('获取作业数据失败');
+                setData([]);
+            }
         } catch (error) {
             console.error('刷新数据失败:', error);
             message.error('刷新失败');
@@ -179,12 +311,7 @@ const Homework = () => {
             setAttachmentsLoading(true);
             
             // 获取教师上传的附件（通过课程计划）
-            if (homework.plan?.id) {
-                const teacherAttachmentsData = await getAttachmentsByCoursePlanId(homework.plan.id);
-                setTeacherAttachments(teacherAttachmentsData.map(item => item.attachment));
-            } else {
-                setTeacherAttachments([]);
-            }
+            // 暂时移除教师附件功能，专注于学生提交的附件
 
             // 获取学生提交的附件（通过作业提交记录）
             const submissions = await getSubmissionsForCurrentTeacher();
@@ -313,9 +440,6 @@ const Homework = () => {
             align: 'center' as const,
             render: (_: any, record: HomeworkItem) => (
                 <div>
-                    <div style={{ fontSize: '12px', color: '#666' }}>
-                        总计: {record.submissionCount}
-                    </div>
                     <div style={{ fontSize: '12px' }}>
                         <span style={{ color: '#52c41a' }}>已批: {record.gradedCount}</span>
                         <span style={{ margin: '0 4px', color: '#d9d9d9' }}>|</span>
@@ -344,43 +468,36 @@ const Homework = () => {
 
     // 初始化过滤列表
     useEffect(() => {
-        if (!isSearching) {
+        if (!isSearching && !selectedClass) {
             setFilteredHomeworkList(data);
         }
-    }, [data, isSearching]);
+    }, [data, isSearching, selectedClass]);
 
-    // 处理搜索
-    const handleSearch = () => {
-        if (!searchText.trim()) {
-            message.warning('请输入搜索关键词');
-            return;
-        }
-        const filtered = data.filter(homework =>
-            homework.name.toLowerCase().includes(searchText.toLowerCase().trim()) ||
-            homework.courseName.toLowerCase().includes(searchText.toLowerCase().trim())
-        );
-        setFilteredHomeworkList(filtered);
-        setIsSearching(true);
-        if (filtered.length === 0) {
-            message.info('未找到匹配的作业');
+    // 处理班级选择变化
+    const handleClassChange = (value: string) => {
+        setSelectedClass(value);
+        if (value) {
+            // 根据选中的班级筛选作业
+            const filtered = data.filter(homework => {
+                // 这里可以根据班级信息筛选作业
+                // 暂时显示所有作业，后续可以根据具体需求调整筛选逻辑
+                return true;
+            });
+            setFilteredHomeworkList(filtered);
+            setIsSearching(true);
         } else {
-            message.success(`找到 ${filtered.length} 个匹配的作业`);
+            // 清空筛选，显示所有作业
+            setFilteredHomeworkList(data);
+            setIsSearching(false);
         }
-    };
-
-    const handleClearSearch = () => {
-        setSearchText('');
-        setFilteredHomeworkList(data);
-        setIsSearching(false);
-        message.success('已清空搜索条件');
     };
 
     return (
         <div style={{ background: '#fff', padding: 24, borderRadius: 8 }}>
             <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 20, fontWeight: 600 }}>作业批改</div>
+                <div style={{ fontSize: 20, fontWeight: 600 }}>我的作业批改</div>
                 <div style={{ fontSize: 14, color: '#666', marginTop: 4 }}>
-                    查看所有待批改的作业，点击"批改作业"进入具体批改页面
+                    查看我教的班级的所有作业，包括已提交和未提交的作业，点击"批改作业"进入具体批改页面
                 </div>
             </div>
             
@@ -392,32 +509,72 @@ const Homework = () => {
                 border: '1px solid #d9d9d9'
             }}>
                 <Row gutter={[16, 16]} align="middle">
-                    <Col span={8}>
-                        <Input 
-                            placeholder="请输入作业名称或课程名称进行搜索..."
-                            value={searchText}
-                            onChange={(e) => setSearchText(e.target.value)}
-                            onPressEnter={handleSearch}
-                            style={{ width: 500 }}
-                            allowClear
-                        />
-                    </Col>
-                    <Col span={8}>
-                        <Space>
-                            <Button type="primary" onClick={handleSearch} disabled={!searchText.trim()} style={{ left: '200px' }}>搜索</Button>
-                            <Button 
-                            onClick={handleClearSearch}
-                            disabled={!isSearching}
-                            style={{ left: '200px' }}
+                    <Col span={12}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontWeight: 400, color: '#333' }}>选择班级：</span>
+                            <Select
+                                placeholder="请选择要查看的班级"
+                                value={selectedClass}
+                                onChange={(value) => {
+                                    setSelectedClass(value);
+                                    if (value) {
+                                        // 根据选中的班级筛选作业
+                                        const selectedClassInfo = teacherClasses.find(c => c.id === value);
+                                        if (selectedClassInfo) {
+                                            // 筛选属于该班级的作业
+                                            const filtered = data.filter(homework => {
+                                                // 检查作业是否属于选中的班级
+                                                return homework.plan?.id === selectedClassInfo.coursePlanId;
+                                            });
+                                            setFilteredHomeworkList(filtered);
+                                            setIsSearching(true);
+                                            message.success(`已筛选 ${selectedClassInfo.name} 班级的作业，共 ${filtered.length} 个`);
+                                        }
+                                    } else {
+                                        // 清空筛选，显示所有作业
+                                        setFilteredHomeworkList(data);
+                                        setIsSearching(false);
+                                        message.success('已显示所有班级的作业');
+                                    }
+                                }}
+                                style={{ width: 300, fontWeight: 400 }}
+                                allowClear
+                                showSearch
+                                filterOption={(input, option) =>
+                                    (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
+                                }
                             >
-                                清空
-                            </Button>
-                        </Space>
+                                {teacherClasses.length > 0 ? (
+                                    teacherClasses.map(classItem => (
+                                        <Select.Option key={classItem.id} value={classItem.id}>
+                                            {classItem.name} ({classItem.courseName})
+                                        </Select.Option>
+                                    ))
+                                ) : (
+                                    <Select.Option value="" disabled>
+                                        请选择班级
+                                    </Select.Option>
+                                )}
+                            </Select>
+                            {selectedClass && (
+                                <Button 
+                                    size="small" 
+                                    onClick={() => {
+                                        setSelectedClass('');
+                                        setFilteredHomeworkList(data);
+                                        setIsSearching(false);
+                                        message.success('已清空筛选，显示所有班级的作业');
+                                    }}
+                                >
+                                    清空筛选
+                                </Button>
+                            )}
+                        </div>
                     </Col>
-                    <Col span={8}>
-                        {isSearching && (
-                            <Tag color="blue" style={{ left: '90px' }}>
-                                搜索中: "{searchText}" (找到 {filteredHomeworkList.length} 个结果)
+                    <Col span={12}>
+                        {selectedClass && (
+                            <Tag color="blue">
+                                当前查看班级：{teacherClasses.find(c => c.id === selectedClass)?.name} ({teacherClasses.find(c => c.id === selectedClass)?.courseName})
                             </Tag>
                         )}
                     </Col>
@@ -427,17 +584,22 @@ const Homework = () => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <div>
                     <span style={{ color: '#666' }}>统计信息：</span>
-                    <Tag color="blue">
-                        总作业：{getCurrentHomeworkList().length} 个
-                    </Tag>
                     {getCurrentHomeworkList().length > 0 && (
                         <>
+                            <Tag color="purple" style={{ marginLeft: 8 }}>
+                                学生总数：{getCurrentHomeworkList().reduce((sum, item) => sum + item.totalStudentCount, 0)} 人
+                            </Tag>
                             <Tag color="green" style={{ marginLeft: 8 }}>
-                                已完成批改：{getCurrentHomeworkList().reduce((sum, item) => sum + item.gradedCount, 0)} 份
+                                已提交：{getCurrentHomeworkList().reduce((sum, item) => sum + item.submissionCount, 0)} 人
                             </Tag>
                             <Tag color="orange" style={{ marginLeft: 8 }}>
-                                待批改：{getCurrentHomeworkList().reduce((sum, item) => sum + (item.submissionCount - item.gradedCount), 0)} 份
+                                待提交：{getCurrentHomeworkList().reduce((sum, item) => sum + (item.totalStudentCount - item.submissionCount), 0)} 人
                             </Tag>
+                            {selectedClass && (
+                                <Tag color="blue" style={{ marginLeft: 8 }}>
+                                    当前筛选：{teacherClasses.find(c => c.id === selectedClass)?.name}
+                                </Tag>
+                            )}
                         </>
                     )}
                 </div>
@@ -463,7 +625,7 @@ const Homework = () => {
                         setCurrentPage(page);
                         setPageSize(pageSize);
                     },
-                    showTotal: (total) => `共 ${total} 条`,
+                    showTotal: (total) => `共 ${total} 条${selectedClass ? ` (${teacherClasses.find(c => c.id === selectedClass)?.name} 班级)` : ' (所有班级)'}`,
                 }}
                 loading={loading}
                 rowClassName={() => 'fixed-row'}
@@ -475,11 +637,10 @@ const Homework = () => {
                 open={detailModalVisible}
                 onCancel={() => {
                     setDetailModalVisible(false);
-                    setTeacherAttachments([]);
                     setStudentAttachments([]);
                     setAttachmentsLoading(false);
                 }}
-                footer={null}
+                footer={null}   
                 width={800}
             >
                 {selectedHomework && (
@@ -507,7 +668,7 @@ const Homework = () => {
                                         marginRight: '12px'
                                     }}>
                                         <div style={{
-                                            width: `${selectedHomework.submissionCount > 0 ? (selectedHomework.gradedCount / selectedHomework.submissionCount) * 100 : 0}%`,
+                                            width: `${selectedHomework.totalStudentCount > 0 ? (selectedHomework.gradedCount / selectedHomework.totalStudentCount) * 100 : 0}%`,
                                             height: '100%',
                                             backgroundColor: '#52c41a',
                                             borderRadius: '5px',
@@ -515,41 +676,16 @@ const Homework = () => {
                                         }}></div>
                                     </div>
                                     <span style={{ fontWeight: 600, color: '#52c41a' }}>
-                                        {selectedHomework.submissionCount > 0 
-                                            ? Math.round((selectedHomework.gradedCount / selectedHomework.submissionCount) * 100)
+                                        {selectedHomework.totalStudentCount > 0 
+                                            ? Math.round((selectedHomework.gradedCount / selectedHomework.totalStudentCount) * 100)
                                             : 0
                                         }%
                                     </span>
                                 </div>
-                            </Descriptions.Item>
-                            {/* <Descriptions.Item label="教师上传的附件">
-                                <div>
-                                    {attachmentsLoading ? (
-                                        <div style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
-                                            正在加载附件信息...
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <div style={{ marginBottom: '8px', fontSize: '12px', color: '#666' }}>
-                                                共 {teacherAttachments.length} 个附件
-                                            </div>
-                                            {teacherAttachments.length > 0 ? (
-                                                <List
-                                                    size="small"
-                                                    dataSource={teacherAttachments}
-                                                    renderItem={(item) => (
-                                                        <List.Item>
-                                                            {renderFileLink(item)}
-                                                        </List.Item>
-                                                    )}
-                                                />
-                                            ) : (
-                                                <span style={{ color: '#999' }}>暂无附件</span>
-                                            )}
-                                        </>
-                                    )}
+                                <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                                    已批改 {selectedHomework.gradedCount} / {selectedHomework.totalStudentCount} 人
                                 </div>
-                            </Descriptions.Item> */}
+                            </Descriptions.Item>
                             <Descriptions.Item label="附件">
                                 <div>
                                     {attachmentsLoading ? (
